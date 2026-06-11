@@ -8,9 +8,8 @@ import re
 # --------------------------------------------------------------------
 # APP CONFIGURATION
 # --------------------------------------------------------------------
-st.set_page_config(page_title="Warehouse Analyzer", layout="wide")
+st.set_page_config(page_title="Warehouse Performance & Dehire Analyzer", layout="wide")
 
-# Helper to clean cluster names
 def clean_cluster_name(cmp_id):
     match = re.match(r'^([a-zA-Z\s\-\(\)]+)', str(cmp_id))
     return match.group(1).strip().upper() if match else "STANDARD-GROUP"
@@ -26,6 +25,7 @@ def load_data(file_path):
     df_raw["Cluster"] = df_raw["CMP ID"].apply(clean_cluster_name)
     df_raw["Type_Clean"] = df_raw["Details"].astype(str).str.strip().str.lower()
     
+    # Identify date columns
     date_cols = [c for c in df_raw.columns if str(c).startswith(("2023", "2024", "2025", "2026"))]
     for col in date_cols:
         df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0.0)
@@ -35,11 +35,11 @@ def load_data(file_path):
 df_raw_original, chronological_months = load_data("Rent Analysis Data.xlsx")
 
 # --------------------------------------------------------------------
-# 2. TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN (REPAIRED)
+# 2. DRILLDOWN LOGIC WITH ERROR GUARD
 # --------------------------------------------------------------------
-st.subheader("Granular Individual Property Footprint Lifecycle Review")
+st.subheader("Individual Warehouse Drilldown")
 alphabetical_codes = sorted(df_raw_original["CMP ID"].unique().tolist())
-target_wh = st.selectbox("Select Specific Target Facility:", options=alphabetical_codes)
+target_wh = st.selectbox("Select Facility:", options=alphabetical_codes)
 
 wh_raw_slice = df_raw_original[df_raw_original["CMP ID"] == target_wh]
 
@@ -54,9 +54,9 @@ else:
     rent_vals = [float(rent_row[m].iloc[0]) if not rent_row.empty else 0.0 for m in chronological_months]
     cap_vals = [float(cap_row[m].iloc[0]) if not cap_row.empty else 0.0 for m in chronological_months]
     
-    # SAFETY CHECK: Only plot if data exists
+    # THE FIX: Only create and update the figure IF data exists
     if sum(rev_vals) == 0 and sum(rent_vals) == 0 and sum(cap_vals) == 0:
-        st.info(f"No active tracking logs found for `{target_wh}`.")
+        st.info(f"The facility '{target_wh}' has no active records in the spreadsheet.")
     else:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=chronological_months, y=rev_vals, name='Revenue (₹)', line=dict(color='#2CA02C', width=3)))
@@ -65,7 +65,6 @@ else:
         
         fig.update_layout(
             template="plotly_white",
-            title=f"Trend Analysis: {target_wh}",
             yaxis=dict(title="Financials (₹)"),
             yaxis2=dict(title="Capacity (MT)", overlaying='y', side='right'),
             height=400,
