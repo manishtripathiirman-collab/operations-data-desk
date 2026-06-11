@@ -13,7 +13,6 @@ st.markdown("---")
 @st.cache_data
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
-    # Clean string spaces from your main identifier columns immediately
     raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip()
     raw_df["Details"] = raw_df["Details"].astype(str).str.strip()
     
@@ -78,19 +77,18 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: YoY MULTI-YEAR ANALYZER (No Pivot, No KeyErrors)
+# TAB 2: YoY MULTI-YEAR ANALYZER (Syntax Error Fixed)
 # =========================================================================
 with tab2:
     st.header("🔄 Multi-Year Performance Comparison")
     st.markdown("Showing warehouses with full operational records stretching over multiple fiscal periods.")
     
-    # Isolate active warehouses present across all 3 primary years from the source data
     years = ["FY 23-24", "FY 24-25", "FY 25-26"]
     
-    # Group raw data to get clean individual rows for each warehouse and its details
+    # Group raw data cleanly
     summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
     
-    # Find list of unique CMP IDs that have positive revenue in all 3 target years
+    # Identify unique IDs tracked through all milestones
     rev_mask = summary_df["Details"] == "Rev"
     valid_ids = summary_df[
         rev_mask & 
@@ -99,41 +97,8 @@ with tab2:
         (summary_df["FY 25-26"] > 0)
     ]["CMP ID"].unique()
     
-    # Filter the dataframe to only keep these stable, multi-year warehouses
     seasoned_data = summary_df[summary_df["CMP ID"].isin(valid_ids)].copy()
     
     if len(seasoned_data) > 0:
-        # User selection toggle
         target_view = st.radio("Choose Comparison Metric", ["Revenue Grouping", "Rent Cost Grouping"], horizontal=True)
-        mapped_detail = "Rev" if "Revenue" in target_view else "Rent"
-        
-        # Filter for the chart visualization
-        chart_df = seasoned_data[seasoned_data["Details"] == mapped_detail]
-        
-        # Melt to format data for grouping bars side by side by year
-        chart_melt = chart_df.melt(
-            id_vars=["CMP ID", "Capacity"], 
-            value_vars=years, 
-            var_name="Fiscal Year", 
-            value_name="Value"
-        )
-        
-        fig_yoy = px.bar(
-            chart_melt, 
-            x="CMP ID", 
-            y="Value", 
-            color="Fiscal Year", 
-            barmode="group",
-            title=f"Year-over-Year {mapped_detail} Growth Matrix",
-            color_discrete_sequence=px.colors.qualitative.Set2
-        )
-        st.plotly_chart(fig_yoy, use_container_width=True)
-        
-        # Render a clean spreadsheet ledger underneath
-        st.subheader("📊 Performance Ledger")
-        
-        # Format a flat spreadsheet for simple operational reading
-        flat_ledger = chart_df.rename(columns={
-            "FY 23-24": f"FY 23-24 ({mapped_detail})",
-            "FY 24-25": f"FY 24-25 ({mapped_detail})",
-            "FY 25-26":
+        mapped_detail = "Rev" if
