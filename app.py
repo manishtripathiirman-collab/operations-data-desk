@@ -32,7 +32,7 @@ def clean_cluster_name(cmp_id):
 # --------------------------------------------------------------------
 # 1. HORIZONTAL MATRIX DATA INGESTION & PROCESSING LAYER
 # --------------------------------------------------------------------
-@st.cache_data
+@st.cache_resource
 def load_and_clean_warehouse_data(file_path):
     try:
         # Load rows directly from worksheet matrix
@@ -105,7 +105,7 @@ target_excel_filename = "Rent Analysis Data.xlsx"
 try:
     df_portfolio, available_fys, df_raw_original, chronological_months = load_and_clean_warehouse_data(target_excel_filename)
 except FileNotFoundError:
-    st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository folder alongside this app script.")
+    st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository paths.")
     st.stop()
 
 # --------------------------------------------------------------------
@@ -203,7 +203,7 @@ with tabs[0]:
         
         st.markdown("---")
         
-        # Display Row 2 — Revenue integration pinned as clear context secondary marker
+        # Display Row 2
         row2_col1, row2_col2, row2_col3 = st.columns(3)
         row2_col1.metric("Total Area Leased", f"{total_area_sqft:,.0f} Sq. Ft.", f"₹{total_rev:,.0f} Total Revenue")
         row2_col2.metric("Macro Revenue / Sq. Ft.", f"₹{macro_rev_psf:,.2f}/sf")
@@ -350,11 +350,11 @@ with tabs[2]:
         # Grouped Dual Nested Bar Chart Visual Engine
         fig_compare = go.Figure()
         
-        # Baseline Year 1 Parameters (Wide light bars backdrop)
+        # Baseline Year 1 Parameters
         fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rev_PSF_Base"], name=f"Rev PSF ({year_alpha})", marker_color="#A6C8E0", offsetgroup=0))
         fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rent_PSF_Base"], name=f"Rent PSF ({year_alpha})", marker_color="#1F77B4", width=0.2, offsetgroup=0))
         
-        # Target Year 2 Parameters (Narrow dark bars foreground stacked via group offsets)
+        # Target Year 2 Parameters
         fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rev_PSF_Comp"], name=f"Rev PSF ({year_beta})", marker_color="#FFC19E", offsetgroup=1))
         fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rent_PSF_Comp"], name=f"Rent PSF ({year_beta})", marker_color="#FF7F0E", width=0.2, offsetgroup=1))
         
@@ -374,70 +374,4 @@ with tabs[2]:
         st.dataframe(styled_compare, use_container_width=True)
 
 # ====================================================================
-# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN (SAFETY PROTECTED BUILD)
-# ====================================================================
-with tabs[3]:
-    st.subheader("Granular Individual Property Footprint Lifecycle Review")
-    
-    alphabetical_codes = sorted(df_portfolio["CMP ID"].unique().tolist()) if not df_portfolio.empty else []
-    target_wh = st.selectbox("Select Specific Target Facility for Deep-Dive Analysis:", options=alphabetical_codes)
-    
-    # Reconstruct month tracking trends horizontally from raw matrix columns
-    wh_raw_slice = df_raw_original[df_raw_original["CMP ID"] == target_wh]
-    
-    if wh_raw_slice.empty:
-        st.info("📊 No horizontal matrix data tracking sequence found for this asset ID.")
-    else:
-        # Extract chronological trend vectors directly from wide month layout coordinates
-        rev_row_raw = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("rev|revenue|income", na=False)]
-        rent_row_raw = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("rent|fixed", na=False)]
-        cap_row_raw = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("cap|capacity|space", na=False)]
-        
-        rev_trend_vals = [float(rev_row_raw[m].iloc[0]) if not rev_row_raw.empty else 0.0 for m in chronological_months]
-        rent_trend_vals = [float(rent_row_raw[m].iloc[0]) if not rent_row_raw.empty else 0.0 for m in chronological_months]
-        cap_trend_vals = [float(cap_row_raw[m].iloc[0]) if not cap_row_raw.empty else 0.0 for m in chronological_months]
-        
-        # Enforce a defensive check to prevent plotting ValueError crashes on completely empty or zero-value assets
-        if sum(rev_trend_vals) == 0 and sum(rent_trend_vals) == 0 and sum(cap_trend_vals) == 0:
-            st.info(f"ℹ️ Selected property `{target_wh}` has zero active records or active footprint tracking logged in the spreadsheet rows.")
-        else:
-            # Interactive dual-axis timeline chart showing dehire curves cleanly
-            fig_trend = go.Figure()
-            fig_trend.add_trace(go.Scatter(x=chronological_months, y=rev_trend_vals, mode='lines+markers', name='Monthly Revenue (₹)', line=dict(color='#2CA02C', width=3)))
-            fig_trend.add_trace(go.Scatter(x=chronological_months, y=rent_trend_vals, mode='lines+markers', name='Monthly Rent (₹)', line=dict(color='#D62728', width=2, dash='dot')))
-            fig_trend.add_trace(go.Scatter(x=chronological_months, y=cap_trend_vals, mode='lines+markers', name='Storage Footprint (MT)', line=dict(color='#1F77B4', width=2), yaxis='y2'))
-            
-            # FIXED: Guarded Axis assignment with exact primary overlay anchor ('y') string reference to prevent Plotly internal layout validation errors
-            fig_trend.update_layout(
-                template="plotly_white",
-                title=f"Continuous Month-by-Month Sequence Analytics Vector: {target_wh}",
-                yaxis=dict(title="Financial Scale Value (₹)", titlefont=dict(color="#2CA02C"), tickfont=dict(color="#2CA02C")),
-                yaxis2=dict(title="Active Capacity Scale (MT)", titlefont=dict(color="#1F77B4"), tickfont=dict(color="#1F77B4"), overlaying='y', side='right'),
-                height=380,
-                xaxis_tickangle=-45
-            )
-            st.plotly_chart(fig_trend, use_container_width=True)
-        
-    st.markdown("#### Annual Macro Allocation Accounting Spread")
-    
-    history_rows = []
-    for yr in available_fys:
-        fy_df = build_runtime_fy_dataset(yr)
-        match_row = fy_df[fy_df["CMP ID"] == target_wh]
-        if not match_row.empty:
-            r = match_row.iloc[0]
-            history_rows.append({
-                "Year": yr,
-                "Rev": r["Rev"],
-                "Rent": r["Rent"],
-                "Net Margin surplus": r["Net_Surplus"]
-            })
-            
-    if history_rows:
-        df_history_grid = pd.DataFrame(history_rows).set_index("Year").T
-        
-        # CRITICAL STYLING RULE: Target only the numeric columns explicitly when configuring styling templates
-        fmt_target = {col: "₹{:,.0f}" for col in df_history_grid.columns}
-        st.dataframe(df_history_grid.style.format(fmt_target), use_container_width=True)
-    else:
-        st.info("No annual records compiled for this specific facility identifier.")
+# TAB 4: INDIVIDUAL WARE
