@@ -132,4 +132,54 @@ st.sidebar.markdown("---")
 selected_fy = st.sidebar.selectbox(
     "Target Fiscal Year Focus",
     options=available_fys,
-    index=min(1, len
+    index=min(1, len(available_fys)-1) if available_fys else 0
+)
+
+# Extract changing capacity profiles matching current chosen timeline footprint bounds
+current_caps = df_raw[df_raw["Type"] == "Cap"][selected_fy]
+min_cap_val = int(current_caps.min()) if not current_caps.empty else 0
+max_cap_val = int(current_caps.max()) if not current_caps.empty else 100000
+
+capacity_range = st.sidebar.slider(
+    f"Active Capacity Boundary ({selected_fy})",
+    min_value=min_cap_val,
+    max_value=max_cap_val,
+    value=(min_cap_val, max_cap_val),
+    help="CRITICAL FILTER RULE: Slider values only limit Tab 1 views. Rest of history tools remain unfiltered to preserve lifecycle context."
+)
+
+# --------------------------------------------------------------------
+# 4. STRUCTURAL ARCHITECTURE (4 HIGH-PERFORMANCE TABS)
+# --------------------------------------------------------------------
+tabs = st.tabs([
+    "📈 Portfolio Performance Summary",
+    "🔄 YoY Sq. Ft. Rent Analyzer",
+    "📊 Compare Two Years",
+    "🔍 Individual Warehouse Drilldown"
+])
+
+# ====================================================================
+# TAB 1: PORTFOLIO PERFORMANCE SUMMARY
+# ====================================================================
+with tabs[0]:
+    st.subheader(f"Portfolio Financial & Footprint Summary Matrix — {selected_fy}")
+    
+    # Extract dynamic runtime dataset matching your raw design metrics
+    active_fy_df = build_runtime_fy_dataset(selected_fy)
+    
+    # Apply filter rule strictly to Tab 1 assets
+    filtered_tab1 = active_fy_df[
+        (active_fy_df["Cap"] >= capacity_range[0]) & 
+        (active_fy_df["Cap"] <= capacity_range[1])
+    ]
+    
+    if filtered_tab1.empty:
+        st.warning("⚠️ No warehouse allocations match the chosen Capacity range slider parameters.")
+    else:
+        # High-Impact Performance Metrics Calculation
+        total_rev = filtered_tab1["Rev"].sum()
+        total_rent = filtered_tab1["Rent"].sum()
+        total_surplus = filtered_tab1["Net_Surplus"].sum()
+        rent_efficiency = (total_rent / total_rev * 100) if total_rev > 0 else 0.0
+        
+        total_area_
