@@ -41,7 +41,7 @@ df_filtered_raw = df_raw[
 tab1, tab2, tab3 = st.tabs(["📈 Portfolio Performance Summary", "🗺️ Regional Demographics", "🔍 Individual Warehouse Drilldown"])
 
 # =========================================================================
-# TAB 1: PORTFOLIO SUMMARY (Fully functional and safe)
+# TAB 1: PORTFOLIO SUMMARY (Fully fixed layout)
 # =========================================================================
 with tab1:
     st.header("📌 Macro Financial Summary")
@@ -66,24 +66,23 @@ with tab1:
         st.subheader("🏆 Top 10 Revenue Generating Clusters")
         top_rev = df_filtered_raw[df_filtered_raw["Details"] == "Rev"].nlargest(10, selected_fy)
         fig_bar = px.bar(top_rev, x=selected_fy, y="CMP ID", orientation='h', color=selected_fy, color_continuous_scale="Viridis")
-        fig_bar.update_layout(yaxis={'width': 'stretch'}, showlegend=False)
-        st.plotly_chart(fig_bar, width="stretch")
+        fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
+        st.plotly_chart(fig_bar, use_container_width=True)
         
     with chart_col2:
         st.subheader("🎯 Overhead Efficiency Scatter Profiler")
         pivoted = df_filtered_raw.pivot_table(index=["CMP ID", "Capacity"], columns="Details", values=selected_fy).reset_index()
         if "Rent" in pivoted.columns and "Rev" in pivoted.columns:
             fig_scatter = px.scatter(pivoted, x="Rent", y="Rev", size="Capacity", hover_name="CMP ID", color="Rev", color_continuous_scale="RdYlGn", trendline="ols")
-            st.plotly_chart(fig_scatter, width="stretch")
+            st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
 # TAB 2: REGIONAL DEMOGRAPHICS (Protected from crashes)
 # =========================================================================
 with tab2:
     st.header("🗺️ Regional State Performance")
-    st.info("Let's align your Rent Data sheet column layout. Here is a preview of what the raw sheet looks like:")
-    # Shows you the top 5 rows of your sheet so we can find where State Name and CMP Name live
-    st.dataframe(df_rent_details.head(5))
+    st.info("Let's look at your raw Rent Data layout below to find where State Name and CMP Name live:")
+    st.dataframe(df_rent_details.head(10))
 
 # =========================================================================
 # TAB 3: INDIVIDUAL WAREHOUSE DRILLDOWN (Safe timeline rendering)
@@ -107,4 +106,4 @@ with tab3:
         timeline_df = timeline_df.sort_values("Month")
         
         fig_time = px.line(timeline_df, x="Month", y="Amount", color="Details", markers=True, color_discrete_map={"Rent": "#EF553B", "Rev": "#00CC96"})
-        st.plotly_chart(fig_time, width="stretch")
+        st.plotly_chart(fig_time, use_container_width=True)
