@@ -27,7 +27,9 @@ except Exception as e:
 st.sidebar.header("🎛️ Page Filters")
 selected_fy = st.sidebar.selectbox("Select Target Fiscal Year (Tab 1)", ["FY 23-24", "FY 24-25", "FY 25-26"], index=1)
 min_c, max_c = int(df_raw["Capacity"].min()), int(df_raw["Capacity"].max())
-s_cap = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_c, max_c, (min_c, max_cap))
+
+# FIXED: Explicitly matching min_c and max_c variables to eliminate the NameError
+s_cap = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_c, max_c, (min_c, max_c))
 
 df_f_raw = df_raw[(df_raw["Capacity"] >= s_cap[0]) & (df_raw["Capacity"] <= s_cap[1])]
 
@@ -67,7 +69,7 @@ with t1:
         if "Rent" in pv.columns and "Rev" in pv.columns:
             st.plotly_chart(px.scatter(pv, x="Rent", y="Rev", size="Capacity", hover_name="CMP ID", color="Rev", color_continuous_scale="RdYlGn", trendline="ols"), use_container_width=True)
 
-# TAB 2: YoY SQ FT RENT ANALYZER
+# TAB 2: PER SQUARE FOOT YoY ANALYZER
 with t2:
     st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
     st.markdown("Monitor YoY real estate spatial efficiency for assets active for at least two years.")
@@ -106,45 +108,4 @@ with t3:
             c_pv = p_seasoned.pivot_table(index=["CMP ID", "SqFt"], columns="Details", values=[b_yr, c_yr]).reset_index()
             for k in [b_yr, c_yr]:
                 if (k, "Rev") not in c_pv.columns: c_pv[(k, "Rev")] = 0
-                if (k, "Rent") not in c_pv.columns: c_pv[(k, "Rent")] = 0
-            c_pv["B_Rev"] = c_pv[(b_yr, "Rev")] / c_pv["SqFt"]; c_pv["B_Rent"] = c_pv[(b_yr, "Rent")] / c_pv["SqFt"]
-            c_pv["C_Rev"] = c_pv[(c_yr, "Rev")] / c_pv["SqFt"]; c_pv["C_Rent"] = c_pv[(c_yr, "Rent")] / c_pv["SqFt"]
-            
-            sel_comp = st.multiselect("🔍 Filter Comparison Visualizer by Facility Code:", options=sorted(list(c_pv["CMP ID"].unique())), key="t3_f")
-            plot_pv = c_pv[c_pv["CMP ID"].isin(sel_comp)].copy() if sel_comp else c_pv.copy()
-            
-            fig_c = go.Figure()
-            fig_c.add_trace(go.Bar(x=plot_pv["CMP ID"], y=plot_pv["B_Rev"], name=f"{b_yr} Rev/SqFt", marker_color="#00CC96", offsetgroup=1))
-            fig_c.add_trace(go.Bar(x=plot_pv["CMP ID"], y=plot_pv["B_Rent"], name=f"{b_yr} Rent/SqFt", marker_color="#EF553B", offsetgroup=1, width=0.2))
-            fig_c.add_trace(go.Bar(x=plot_pv["CMP ID"], y=plot_pv["C_Rev"], name=f"{c_yr} Rev/SqFt", marker_color="#0068C9", offsetgroup=2))
-            fig_c.add_trace(go.Bar(x=plot_pv["CMP ID"], y=plot_pv["C_Rent"], name=f"{c_yr} Rent/SqFt", marker_color="#FF4B4B", offsetgroup=2, width=0.2))
-            fig_c.update_layout(barmode="group", xaxis_title="Warehouse Code", yaxis_title="Value (₹/Sq. Ft.)", legend_orientation="h")
-            st.plotly_chart(fig_c, use_container_width=True)
-            
-            ld = pd.DataFrame({"CMP ID": c_pv["CMP ID"], "Total Area": c_pv["SqFt"], f"{b_yr} Rev/PSF": c_pv["B_Rev"], f"{b_yr} Rent/PSF": c_pv["B_Rent"], f"{c_yr} Rev/PSF": c_pv["C_Rev"], f"{c_yr} Rent/PSF": c_pv["C_Rent"]})
-            if sel_comp: ld = ld[ld["CMP ID"].isin(sel_comp)]
-            st.dataframe(ld.style.format({"Total Area": "{:,.0f} Sq. Ft.", f"{b_yr} Rev/PSF": "₹{:.2f}/sf", f"{b_yr} Rent/PSF": "₹{:.2f}/sf", f"{c_yr} Rev/PSF": "₹{:.2f}/sf", f"{c_yr} Rent/PSF": "₹{:.2f}/sf"}), use_container_width=True)
-        else: st.info("No active locations recorded across target timelines.")
-
-# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
-with t4:
-    st.header("🔍 Granular Asset Investigation Desk")
-    selected_facility = st.selectbox("Select Target Facility to Inspect", sorted(df_raw["CMP ID"].unique()))
-    facility_profile = df_raw[df_raw["CMP ID"] == selected_facility]
-    m_cols = [c for c in df_raw.columns if any(y in str(c) for y in ["2023", "2024", "2025", "2026"])]
-    
-    if not facility_profile.empty and len(m_cols) > 0:
-        st.metric("Storage Volume Capacity (MT)", f"{facility_profile['Capacity'].values[0]:,} MT")
-        t_df = facility_profile.melt(id_vars=["Details"], value_vars=m_cols, var_name="Month", value_name="Amount")
-        t_df["Month"] = pd.to_datetime(t_df["Month"])
-        t_df = t_df.sort_values("Month")
-        st.plotly_chart(px.line(t_df, x="Month", y="Amount", color="Details", markers=True, color_discrete_map={"Rent": "#EF553B", "Rev": "#00CC96"}), use_container_width=True)
-        
-        st.markdown("### 📊 Annual Consolidated Summary Ledger")
-        ann = facility_profile[["Details"] + ["FY 23-24", "FY 24-25", "FY 25-26"]].copy().set_index("Details")
-        if "Rev" in ann.index and "Rent" in ann.index: 
-            ann.loc["Net Margin surplus"] = ann.loc["Rev"] - ann.loc["Rent"]
-            
-        # FIXED: Explicitly target only the numerical columns for formatting, leaving strings safe!
-        fmt_target = {"FY 23-24": "₹{:,.0f}", "FY 24-25": "₹{:,.0f}", "FY 25-26": "₹{:,.0f}"}
-        st.dataframe(ann.style.format(fmt_target), use_container_width=True)
+                if (k, "Rent") not in c_pv.columns: c_pv[(k, "Rent")]
