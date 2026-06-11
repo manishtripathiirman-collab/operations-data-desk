@@ -23,11 +23,11 @@ try:
 except Exception as e:
     st.error(f"⚠️ Error loading data: {e}"); st.stop()
 
-# SIDEBAR FILTER
+# SIDEBAR CONTROL FILTERS
 st.sidebar.header("🎛️ Page Filters")
 selected_fy = st.sidebar.selectbox("Select Target Fiscal Year (Tab 1)", ["FY 23-24", "FY 24-25", "FY 25-26"], index=1)
 min_c, max_c = int(df_raw["Capacity"].min()), int(df_raw["Capacity"].max())
-s_cap = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_c, max_c, (min_c, max_c))
+s_cap = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_c, max_c, (min_c, max_cap))
 
 df_f_raw = df_raw[(df_raw["Capacity"] >= s_cap[0]) & (df_raw["Capacity"] <= s_cap[1])]
 
@@ -142,5 +142,9 @@ with t4:
         
         st.markdown("### 📊 Annual Consolidated Summary Ledger")
         ann = facility_profile[["Details"] + ["FY 23-24", "FY 24-25", "FY 25-26"]].copy().set_index("Details")
-        if "Rev" in ann.index and "Rent" in ann.index: ann.loc["Net Margin surplus"] = ann.loc["Rev"] - ann.loc["Rent"]
-        st.dataframe(ann.style.format("₹{:,,.0f}"), use_container_width=True)
+        if "Rev" in ann.index and "Rent" in ann.index: 
+            ann.loc["Net Margin surplus"] = ann.loc["Rev"] - ann.loc["Rent"]
+            
+        # FIXED: Explicitly target only the numerical columns for formatting, leaving strings safe!
+        fmt_target = {"FY 23-24": "₹{:,.0f}", "FY 24-25": "₹{:,.0f}", "FY 25-26": "₹{:,.0f}"}
+        st.dataframe(ann.style.format(fmt_target), use_container_width=True)
