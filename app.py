@@ -30,11 +30,11 @@ def load_and_clean_warehouse_data(file_path):
         df_raw_dirty = pd.read_excel(file_path, sheet_name="RAW Data")
         df_rent_dirty = pd.read_excel(file_path, sheet_name="Rent Data", skiprows=1)
         
-        # --- Clean RAW Data Sheet (Monthly Column Matrix) ---
+        # --- Clean RAW Data Sheet ---
         df_raw = df_raw_dirty.copy()
         df_raw.columns = [str(col).strip() for col in df_raw.columns]
-        
         df_raw["CMP ID"] = df_raw["CMP ID"].astype(str).str.strip().str.upper()
+        
         if "Cluster" in df_raw.columns:
             df_raw["Cluster"] = df_raw["Cluster"].astype(str).str.strip()
         else:
@@ -47,27 +47,27 @@ def load_and_clean_warehouse_data(file_path):
             
         df_raw["Type_Clean"] = df_raw["Details"].astype(str).str.lower()
         
-        # Identify monthly date tracking columns dynamically
+        # Parse and isolate the raw date columns from metadata
         date_cols = []
         for col in df_raw.columns:
             if col.startswith("2023") or col.startswith("2024") or col.startswith("2025") or col.startswith("2026"):
                 date_cols.append(col)
                 df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0.0)
                 
-        # Define Fiscal Year date buckets (April to March cycles)
+        # Group monthly columns into standard Fiscal Years (April to March)
         fy_groups = {
             "FY 23-24": [c for c in date_cols if (c >= "2023-04-01" and c <= "2024-03-01")],
             "FY 24-25": [c for c in date_cols if (c >= "2024-04-01" and c <= "2025-03-01")],
             "FY 25-26": [c for c in date_cols if (c >= "2025-04-01" and c <= "2026-03-01")]
         }
         
-        # Reshape vertical tracking types into horizontal summary arrays
+        # Reshape matrix rows into an unpivoted structured master portfolio table
         unique_warehouses = df_raw["CMP ID"].unique()
         portfolio_records = []
         
         for cid in unique_warehouses:
             wh_rows = df_raw[df_raw["CMP ID"] == cid]
-            cluster_val = wh_rows["Cluster"].iloc[0] if "Cluster" in wh_rows.columns else "Standard-Group"
+            cluster_val = wh_rows["Cluster"].iloc[0] if not wh_rows.empty else "Standard-Group"
             
             rev_rows = wh_rows[wh_rows["Type_Clean"].str.contains("rev|revenue|income", na=False)]
             rent_rows = wh_rows[wh_rows["Type_Clean"].str.contains("rent|fixed", na=False)]
@@ -125,7 +125,7 @@ target_excel_filename = "Rent Analysis Data.xlsx"
 try:
     df_portfolio, df_rent, available_fys = load_and_clean_warehouse_data(target_excel_filename)
 except FileNotFoundError:
-    st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository folder alongside this app script.")
+    st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository path.")
     st.stop()
 
 # --------------------------------------------------------------------
@@ -150,4 +150,11 @@ def build_runtime_fy_dataset(fy_target):
 st.sidebar.title("⚙️ Global Audit Controls")
 st.sidebar.markdown("---")
 
-selected_fy = st.
+selected_fy = st.sidebar.selectbox(
+    "Target Fiscal Year Focus",
+    options=available_fys,
+    index=available_fys.index("FY 24-25") if "FY 24-25" in available_fys else 0
+)
+
+current_caps = df_portfolio[df_portfolio["Fiscal Year"] == selected_fy]["Cap"] if not df_portfolio.empty else pd.Series([0])
+min_cap_val
