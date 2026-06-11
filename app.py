@@ -14,8 +14,9 @@ st.markdown("---")
 @st.cache_data
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
-    # Clean string spaces from your main identifier columns immediately
-    raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip()
+    
+    # CRITICAL FIX: Force all IDs to UPPERCASE and strip spaces to ensure matching across rows
+    raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip().str.upper()
     raw_df["Details"] = raw_df["Details"].astype(str).str.strip()
     
     rent_details_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="Rent Data", skiprows=1, engine="openpyxl")
@@ -41,7 +42,7 @@ df_filtered_raw = df_raw[
     (df_raw["Capacity"] <= selected_capacity[1])
 ]
 
-# SAFE UNDER-THE-HOOD DATA INSPECTOR (In Sidebar to find why values are 0)
+# SAFE UNDER-THE-HOOD DATA INSPECTOR (In Sidebar to verify text matches)
 st.sidebar.markdown("---")
 with st.sidebar.expander("🔍 Inspect Hidden Excel Formatting"):
     st.write("**Exact labels found in Details column:**")
@@ -50,8 +51,6 @@ with st.sidebar.expander("🔍 Inspect Hidden Excel Formatting"):
     st.write(f"FY 23-24 type: {df_raw['FY 23-24'].dtype}")
     st.write(f"FY 24-25 type: {df_raw['FY 24-25'].dtype}")
     st.write(f"FY 25-26 type: {df_raw['FY 25-26'].dtype}")
-    st.write("**First 3 rows of raw file data:**")
-    st.dataframe(df_raw[["CMP ID", "Details", "FY 23-24"]].head(3))
 
 # 4. TABBED LAYOUT CREATION
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -108,5 +107,80 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: PER SQUARE FOOT YoY ANALYZER (Warehouses > 2 Years)
-# =================================
+# TAB 2: PER SQUARE FOOT YoY ANALYZER
+# =========================================================================
+with tab2:
+    st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
+    st.markdown("Isolating warehouses with continuous records to monitor YoY real estate spatial efficiency.")
+    
+    years = ["FY 23-24", "FY 24-25", "FY 25-26"]
+    
+    # Force numeric types cleanly before processing
+    for yr in years:
+        df_raw[yr] = pd.to_numeric(df_raw[yr], errors='coerce').fillna(0)
+        
+    summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
+    
+    valid_ids = summary_df[
+        (summary_df["Details"] == "Rev") & 
+        (summary_df["FY 23-24"] > 0) & 
+        (summary_df["FY 24-25"] > 0) & 
+        (summary_df["FY 25-26"] > 0)
+    ]["CMP ID"].unique()
+    
+    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(valid_ids)) & (summary_df["Details"] == "Rent")].copy()
+    
+    if not seasoned_rent.empty:
+        seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
+        
+        for yr in years:
+            seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
+            
+        psf_cols = [f"{yr}_PSF" for yr in years]
+        melt_psf = seasoned_rent.melt(
+            id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
+            value_vars=psf_cols,
+            var_name="Fiscal Year",
+            value_name="Rent PSF"
+        )
+        melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
+        
+        fig_psf = px.bar(
+            melt_psf,
+            x="CMP ID",
+            y="Rent PSF",
+            color="Fiscal Year",
+            barmode="group",
+            title="Year-on-Year Rent Cost per Square Foot Comparison (1 MT = 6 Sq. Ft.)",
+            labels={"Rent PSF": "Rent per Sq. Ft. (₹)"},
+            color_discrete_sequence=px.colors.sequential.Teal
+        )
+        st.plotly_chart(fig_psf, use_container_width=True)
+        
+        st.subheader("📊 Spatial Efficiency Ledger")
+        display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
+        ledger_df = seasoned_rent[display_cols].copy()
+        
+        st.dataframe(
+            ledger_df.style.format({
+                "Capacity": "{:,.0f} MT",
+                "Estimated SqFt": "{:,.0f} Sq. Ft.",
+                "FY 23-24_PSF": "₹{:.2f}/sqft",
+                "FY 24-25_PSF": "₹{:.2f}/sqft",
+                "FY 25-26_PSF": "₹{:.2f}/sqft"
+            }),
+            use_container_width=True
+        )
+    else:
+        st.info("No long-term operational facilities found matching continuous multi-year milestones yet.")
+
+# =========================================================================
+# TAB 3: DUAL-YEAR PERFORMANCE ANALYZER
+# =========================================================================
+with tab3:
+    st.header("📊 Comparative Dual-Period Unit Assessment")
+    st.markdown("Isolate and evaluate pricing efficiency dynamics across any two chosen operational horizons.")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        base_year = st.selectbox("Select Baseline Year",
