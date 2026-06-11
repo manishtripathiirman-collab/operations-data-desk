@@ -9,17 +9,15 @@ st.title("🏢 Warehouse Performance Portal")
 st.markdown("Track rent costs, revenue streams, and asset efficiency across multi-year milestones.")
 st.markdown("---")
 
-# 2. LOAD DATA AND CLEAN HEADERS
+# 2. LOAD DATA DIRECTLY FROM YOUR EXCEL WORKBOOK (.XLSX)
 @st.cache_data
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
-    # Convert all column headers to standard strings to avoid datetime object mismatches
-    raw_df.columns = [str(col).strip() for col in raw_df.columns]
+    # Clean string spaces from your main identifier columns immediately
+    raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip()
+    raw_df["Details"] = raw_df["Details"].astype(str).str.strip()
     
-    # Sheet 2 headers are in row 1, so we skip row 0
     rent_details_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="Rent Data", skiprows=1, engine="openpyxl")
-    rent_details_df.columns = [str(col).strip() for col in rent_details_df.columns]
-    
     return raw_df, rent_details_df
 
 try:
@@ -36,7 +34,7 @@ min_cap = int(df_raw["Capacity"].min())
 max_cap = int(df_raw["Capacity"].max())
 selected_capacity = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_cap, max_cap, (min_cap, max_cap))
 
-# Apply baseline filtering
+# Apply baseline filtering based on sidebar selections
 df_filtered_raw = df_raw[
     (df_raw["Capacity"] >= selected_capacity[0]) & 
     (df_raw["Capacity"] <= selected_capacity[1])
@@ -80,82 +78,62 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: YoY MULTI-YEAR ANALYZER (Fixed columns string bug)
+# TAB 2: YoY MULTI-YEAR ANALYZER (No Pivot, No KeyErrors)
 # =========================================================================
 with tab2:
     st.header("🔄 Multi-Year Performance Comparison")
-    st.markdown("Showing warehouses with records stretching across multiple fiscal periods.")
+    st.markdown("Showing warehouses with full operational records stretching over multiple fiscal periods.")
     
-    # Pivot using our clean text strings
-    yoy_pivot = df_raw.pivot_table(index=["CMP ID", "Capacity"], columns="Details", values=["FY 23-24", "FY 24-25", "FY 25-26"])
+    # Isolate active warehouses present across all 3 primary years from the source data
+    years = ["FY 23-24", "FY 24-25", "FY 25-26"]
     
-    # Flatten column headers safely
-    yoy_pivot.columns = [f"{col[1]}_{col[0]}" for col in yoy_pivot.columns]
-    yoy_pivot = yoy_pivot.reset_index()
+    # Group raw data to get clean individual rows for each warehouse and its details
+    summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
     
-    # Filter out locations that haven't been active across all three operational periods
-    seasoned_warehouses = yoy_pivot[
-        (yoy_pivot["FY 23-24_Rev"] > 0) & 
-        (yoy_pivot["FY 24-25_Rev"] > 0) & 
-        (yoy_pivot["FY 25-26_Rev"] > 0)
-    ].copy()
+    # Find list of unique CMP IDs that have positive revenue in all 3 target years
+    rev_mask = summary_df["Details"] == "Rev"
+    valid_ids = summary_df[
+        rev_mask & 
+        (summary_df["FY 23-24"] > 0) & 
+        (summary_df["FY 24-25"] > 0) & 
+        (summary_df["FY 25-26"] > 0)
+    ]["CMP ID"].unique()
     
-    if not seasoned_warehouses.empty:
-        melted_yoy = seasoned_warehouses.melt(
-            id_vars=["CMP ID", "Capacity"],
-            value_vars=["FY 23-24_Rev", "FY 24-25_Rev", "FY 25-26_Rev", "FY 23-24_Rent", "FY 24-25_Rent", "FY 25-26_Rent"],
-            var_name="Metric_Year", value_name="Value"
+    # Filter the dataframe to only keep these stable, multi-year warehouses
+    seasoned_data = summary_df[summary_df["CMP ID"].isin(valid_ids)].copy()
+    
+    if len(seasoned_data) > 0:
+        # User selection toggle
+        target_view = st.radio("Choose Comparison Metric", ["Revenue Grouping", "Rent Cost Grouping"], horizontal=True)
+        mapped_detail = "Rev" if "Revenue" in target_view else "Rent"
+        
+        # Filter for the chart visualization
+        chart_df = seasoned_data[seasoned_data["Details"] == mapped_detail]
+        
+        # Melt to format data for grouping bars side by side by year
+        chart_melt = chart_df.melt(
+            id_vars=["CMP ID", "Capacity"], 
+            value_vars=years, 
+            var_name="Fiscal Year", 
+            value_name="Value"
         )
         
-        melted_yoy["Year"] = melted_yoy["Metric_Year"].apply(lambda x: x.split('_')[0])
-        melted_yoy["Type"] = melted_yoy["Metric_Year"].apply(lambda x: x.split('_')[1])
-        
-        target_view = st.radio("Choose Comparison Metric", ["Revenue Grouping", "Rent Cost Grouping"], horizontal=True)
-        mapped_type = "Rev" if "Revenue" in target_view else "Rent"
-        
-        filtered_melt = melted_yoy[melted_yoy["Type"] == mapped_type]
-        
         fig_yoy = px.bar(
-            filtered_melt, 
+            chart_melt, 
             x="CMP ID", 
             y="Value", 
-            color="Year", 
+            color="Fiscal Year", 
             barmode="group",
-            title=f"Year-over-Year {mapped_type} Growth Tracking Matrix",
-            color_discrete_sequence=px.colors.qualitative.Pastel
+            title=f"Year-over-Year {mapped_detail} Growth Matrix",
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
         st.plotly_chart(fig_yoy, use_container_width=True)
         
+        # Render a clean spreadsheet ledger underneath
         st.subheader("📊 Performance Ledger")
-        st.dataframe(
-            seasoned_warehouses.style.format({
-                "Capacity": "{:,.0f} MT",
-                "FY 23-24_Rev": "₹{:,.0f}", "FY 24-25_Rev": "₹{:,.0f}", "FY 25-26_Rev": "₹{:,.0f}",
-                "FY 23-24_Rent": "₹{:,.0f}", "FY 24-25_Rent": "₹{:,.0f}", "FY 25-26_Rent": "₹{:,.0f}"
-            })
-        )
-    else:
-        st.info("No facilities found with active financial entries recorded consistently across all 3 fiscal periods.")
-
-# =========================================================================
-# TAB 3: INDIVIDUAL WAREHOUSE DRILLDOWN
-# =========================================================================
-with tab3:
-    st.header("🔍 Granular Asset Investigation Desk")
-    
-    selected_facility = st.selectbox("Select Target Facility to Inspect", df_raw["CMP ID"].unique())
-    facility_profile = df_raw[df_raw["CMP ID"] == selected_facility]
-    
-    month_cols = [col for col in df_raw.columns if any(year in str(col) for year in ["2023", "2024", "2025", "2026"])]
-    
-    if not facility_profile.empty and len(month_cols) > 0:
-        cap_val = facility_profile["Capacity"].values[0]
-        st.metric("Storage Volume Capacity (MT)", f"{cap_val:,} MT")
         
-        timeline_df = facility_profile.melt(id_vars=["Details"], value_vars=month_cols, var_name="Month", value_name="Amount")
-        # Ensure month formatting behaves with strings
-        timeline_df["Month"] = pd.to_datetime(timeline_df["Month"])
-        timeline_df = timeline_df.sort_values("Month")
-        
-        fig_time = px.line(timeline_df, x="Month", y="Amount", color="Details", markers=True, color_discrete_map={"Rent": "#EF553B", "Rev": "#00CC96"})
-        st.plotly_chart(fig_time, use_container_width=True)
+        # Format a flat spreadsheet for simple operational reading
+        flat_ledger = chart_df.rename(columns={
+            "FY 23-24": f"FY 23-24 ({mapped_detail})",
+            "FY 24-25": f"FY 24-25 ({mapped_detail})",
+            "FY 25-26":
