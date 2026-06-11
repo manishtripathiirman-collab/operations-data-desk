@@ -30,7 +30,7 @@ except Exception as e:
 
 # 3. GLOBAL CONTROL FILTERS (SIDEBAR)
 st.sidebar.header("🎛️ Page Filters")
-selected_fy = st.sidebar.selectbox("Select Target Fiscal Year (Tab 1 & 2)", ["FY 23-24", "FY 24-25", "FY 25-26"], index=1)
+selected_fy = st.sidebar.selectbox("Select Target Fiscal Year (Tab 1)", ["FY 23-24", "FY 24-25", "FY 25-26"], index=1)
 
 min_cap = int(df_raw["Capacity"].min())
 max_cap = int(df_raw["Capacity"].max())
@@ -107,11 +107,11 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: PER SQUARE FOOT YoY ANALYZER
+# TAB 2: DYNAMIC PER SQUARE FOOT YoY ANALYZER (Warehouses >= 2 Years)
 # =========================================================================
 with tab2:
     st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
-    st.markdown("Isolating warehouses with continuous records to monitor YoY real estate spatial efficiency.")
+    st.markdown("Monitor YoY real estate spatial efficiency for long-term operational assets.")
     
     years = ["FY 23-24", "FY 24-25", "FY 25-26"]
     
@@ -120,14 +120,15 @@ with tab2:
         
     summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
     
-    valid_ids = summary_df[
-        (summary_df["Details"] == "Rev") & 
-        (summary_df["FY 23-24"] > 0) & 
-        (summary_df["FY 24-25"] > 0) & 
-        (summary_df["FY 25-26"] > 0)
-    ]["CMP ID"].unique()
+    # CRITICAL ADVANCEMENT FILTER: Identify warehouses active for AT LEAST 2 YEARS (records > 0 in at least 2 categories)
+    # We build a checklist counting how many years have active positive revenue or rent entries
+    summary_df["Active_Years_Count"] = (summary_df["FY 23-24"] > 0).astype(int) + (summary_df["FY 24-25"] > 0).astype(int) + (summary_df["FY 25-26"] > 0).astype(int)
     
-    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(valid_ids)) & (summary_df["Details"] == "Rent")].copy()
+    # Filter unique IDs where history depth is >= 2 active periods
+    seasoned_ids = summary_df[summary_df["Active_Years_Count"] >= 2]["CMP ID"].unique()
+    
+    # Isolate Rent information for these seasoned locations
+    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(seasoned_ids)) & (summary_df["Details"] == "Rent")].copy()
     
     if not seasoned_rent.empty:
         seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
@@ -135,8 +136,25 @@ with tab2:
         for yr in years:
             seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
             
+        # DYNAMIC USER SEARCH & SELECTION FILTERS
+        st.markdown("---")
+        col_select, col_clear = st.columns([4, 1])
+        with col_select:
+            selected_warehouses = st.multiselect(
+                "🔍 Search and Select Specific Warehouses to Display (Leave blank to see all matched assets):",
+                options=sorted(list(seasoned_rent["CMP ID"].unique())),
+                placeholder="Type or click to choose..."
+            )
+            
+        # Apply the dynamic filter selection choice on top of the dataset rows
+        if selected_warehouses:
+            display_rent_df = seasoned_rent[seasoned_rent["CMP ID"].isin(selected_warehouses)].copy()
+        else:
+            display_rent_df = seasoned_rent.copy()
+            
+        # Melt data cleanly to plot the interactive bar groups
         psf_cols = [f"{yr}_PSF" for yr in years]
-        melt_psf = seasoned_rent.melt(
+        melt_psf = display_rent_df.melt(
             id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
             value_vars=psf_cols,
             var_name="Fiscal Year",
@@ -144,6 +162,7 @@ with tab2:
         )
         melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
         
+        # Interactive YoY Plot Engine
         fig_psf = px.bar(
             melt_psf,
             x="CMP ID",
@@ -151,14 +170,16 @@ with tab2:
             color="Fiscal Year",
             barmode="group",
             title="Year-on-Year Rent Cost per Square Foot Comparison (1 MT = 6 Sq. Ft.)",
-            labels={"Rent PSF": "Rent per Sq. Ft. (₹)"},
+            labels={"Rent PSF": "Rent per Sq. Ft. (₹)", "CMP ID": "Warehouse Code"},
             color_discrete_sequence=px.colors.sequential.Teal
         )
+        fig_psf.update_layout(xaxis={'categoryorder':'category ascending'})
         st.plotly_chart(fig_psf, use_container_width=True)
         
+        # Dynamic Data Matrix Ledger view
         st.subheader("📊 Spatial Efficiency Ledger")
         display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
-        ledger_df = seasoned_rent[display_cols].copy()
+        ledger_df = display_rent_df[display_cols].copy()
         
         st.dataframe(
             ledger_df.style.format({
@@ -192,7 +213,8 @@ with tab3:
         target_years = [base_year, comp_year]
         paired_summary = df_raw.groupby(["CMP ID", "Capacity", "Details"])[target_years].sum().reset_index()
         
-        active_mask = (paired_summary["Details"] == "Rev") & (paired_summary[base_year] > 0) & (paired_summary[comp_year] > 0)
+        # Check active status across both selected years
+        active_mask = (paired_summary["Details"] == "Rev") & ((paired_summary[base_year] > 0) | (paired_summary[comp_year] > 0))
         paired_valid_ids = paired_summary[active_mask]["CMP ID"].unique()
         
         paired_seasoned = paired_summary[paired_summary["CMP ID"].isin(paired_valid_ids)].copy()
@@ -201,29 +223,48 @@ with tab3:
             paired_seasoned["SqFt"] = paired_seasoned["Capacity"] * 6
             comp_pivot = paired_seasoned.pivot_table(index=["CMP ID", "SqFt"], columns="Details", values=[base_year, comp_year]).reset_index()
             
+            # Reconstruct columns safely and add missing components gracefully to handle different timeline lengths
+            for col_prefix in [base_year, comp_year]:
+                if (col_prefix, "Rev") not in comp_pivot.columns: comp_pivot[(col_prefix, "Rev")] = 0
+                if (col_prefix, "Rent") not in comp_pivot.columns: comp_pivot[(col_prefix, "Rent")] = 0
+                
             comp_pivot[f"{base_year}_Rev_PSF"] = comp_pivot[(base_year, "Rev")] / comp_pivot["SqFt"]
             comp_pivot[f"{base_year}_Rent_PSF"] = comp_pivot[(base_year, "Rent")] / comp_pivot["SqFt"]
             comp_pivot[f"{comp_year}_Rev_PSF"] = comp_pivot[(comp_year, "Rev")] / comp_pivot["SqFt"]
             comp_pivot[f"{comp_year}_Rent_PSF"] = comp_pivot[(comp_year, "Rent")] / comp_pivot["SqFt"]
             
+            # Dynamic filter selection mirror for Tab 3
+            st.markdown("---")
+            selected_compare_warehouses = st.multiselect(
+                "🔍 Filter Comparison Visualizer by Facility Code:",
+                options=sorted(list(comp_pivot["CMP ID"].unique())),
+                key="tab3_filter",
+                placeholder="Type or click to filter comparison bars..."
+            )
+            
+            if selected_compare_warehouses:
+                comp_plot_pivot = comp_pivot[comp_pivot["CMP ID"].isin(selected_compare_warehouses)].copy()
+            else:
+                comp_plot_pivot = comp_pivot.copy()
+                
             st.subheader(f"📈 Unit Rate Spread Profile ({base_year} vs {comp_year})")
             fig_compare = go.Figure()
             
             fig_compare.add_trace(go.Bar(
-                x=comp_pivot["CMP ID"], y=comp_pivot[f"{base_year}_Rev_PSF"],
+                x=comp_plot_pivot["CMP ID"], y=comp_plot_pivot[f"{base_year}_Rev_PSF"],
                 name=f"{base_year} Rev/SqFt", marker_color="#00CC96", offsetgroup=1
             ))
             fig_compare.add_trace(go.Bar(
-                x=comp_pivot["CMP ID"], y=comp_pivot[f"{base_year}_Rent_PSF"],
+                x=comp_plot_pivot["CMP ID"], y=comp_plot_pivot[f"{base_year}_Rent_PSF"],
                 name=f"{base_year} Rent/SqFt", marker_color="#EF553B", offsetgroup=1,
                 base=0, width=0.2
             ))
             fig_compare.add_trace(go.Bar(
-                x=comp_pivot["CMP ID"], y=comp_pivot[f"{comp_year}_Rev_PSF"],
+                x=comp_plot_pivot["CMP ID"], y=comp_plot_pivot[f"{comp_year}_Rev_PSF"],
                 name=f"{comp_year} Rev/SqFt", marker_color="#0068C9", offsetgroup=2
             ))
             fig_compare.add_trace(go.Bar(
-                x=comp_pivot["CMP ID"], y=comp_pivot[f"{comp_year}_Rent_PSF"],
+                x=comp_plot_pivot["CMP ID"], y=comp_plot_pivot[f"{comp_year}_Rent_PSF"],
                 name=f"{comp_year} Rent/SqFt", marker_color="#FF4B4B", offsetgroup=2,
                 base=0, width=0.2
             ))
@@ -246,6 +287,10 @@ with tab3:
                 f"{comp_year} Rent/PSF": comp_pivot[f"{comp_year}_Rent_PSF"]
             })
             
+            # Apply filter mirror to ledger view
+            if selected_compare_warehouses:
+                ledger_display = ledger_display[ledger_display["CMP ID"].isin(selected_compare_warehouses)]
+                
             st.dataframe(
                 ledger_display.style.format({
                     "Total Area": "{:,.0f} Sq. Ft.",
@@ -257,7 +302,7 @@ with tab3:
                 use_container_width=True
             )
         else:
-            st.info("No long-term active locations recorded across both filtered target timelines.")
+            st.info("No active locations recorded across both filtered target timelines.")
 
 # =========================================================================
 # TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
