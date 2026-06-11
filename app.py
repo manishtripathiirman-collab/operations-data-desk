@@ -374,7 +374,7 @@ with tabs[2]:
         st.dataframe(styled_compare, use_container_width=True)
 
 # ====================================================================
-# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
+# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN (SAFETY PROTECTED BUILD)
 # ====================================================================
 with tabs[3]:
     st.subheader("Granular Individual Property Footprint Lifecycle Review")
@@ -397,21 +397,25 @@ with tabs[3]:
         rent_trend_vals = [float(rent_row_raw[m].iloc[0]) if not rent_row_raw.empty else 0.0 for m in chronological_months]
         cap_trend_vals = [float(cap_row_raw[m].iloc[0]) if not cap_row_raw.empty else 0.0 for m in chronological_months]
         
-        # Interactive dual-axis timeline chart showing dehire curves cleanly
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Scatter(x=chronological_months, y=rev_trend_vals, mode='lines+markers', name='Monthly Revenue (₹)', line=dict(color='#2CA02C', width=3)))
-        fig_trend.add_trace(go.Scatter(x=chronological_months, y=rent_trend_vals, mode='lines+markers', name='Monthly Rent (₹)', line=dict(color='#D62728', width=2, dash='dot')))
-        fig_trend.add_trace(go.Scatter(x=chronological_months, y=cap_trend_vals, mode='lines+markers', name='Storage Footprint (MT)', line=dict(color='#1F77B4', width=2), yaxis='y2'))
-        
-        fig_trend.update_layout(
-            template="plotly_white",
-            title=f"Continuous Month-by-Month Sequence Analytics Vector: {target_wh}",
-            yaxis=dict(title="Financial Scale Value (₹)", titlefont=dict(color="#2CA02C"), tickfont=dict(color="#2CA02C")),
-            yaxis2=dict(title="Active Capacity Scale (MT)", titlefont=dict(color="#1F77B4"), tickfont=dict(color="#1F77B4"), overlaying='y', side='right'),
-            height=380,
-            xaxis_tickangle=-45
-        )
-        st.plotly_chart(fig_trend, use_container_width=True)
+        # FIXED: Enforce a defensive check to prevent plotting ValueError crashes on completely empty assets
+        if sum(rev_trend_vals) == 0 and sum(rent_trend_vals) == 0 and sum(cap_trend_vals) == 0:
+            st.info(f"ℹ️ Selected property `{target_wh}` has zero active records or footprint tracking logged in the spreadsheet rows.")
+        else:
+            # Interactive dual-axis timeline chart showing dehire curves cleanly
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Scatter(x=chronological_months, y=rev_trend_vals, mode='lines+markers', name='Monthly Revenue (₹)', line=dict(color='#2CA02C', width=3)))
+            fig_trend.add_trace(go.Scatter(x=chronological_months, y=rent_trend_vals, mode='lines+markers', name='Monthly Rent (₹)', line=dict(color='#D62728', width=2, dash='dot')))
+            fig_trend.add_trace(go.Scatter(x=chronological_months, y=cap_trend_vals, mode='lines+markers', name='Storage Footprint (MT)', line=dict(color='#1F77B4', width=2), yaxis='y2'))
+            
+            fig_trend.update_layout(
+                template="plotly_white",
+                title=f"Continuous Month-by-Month Sequence Analytics Vector: {target_wh}",
+                yaxis=dict(title="Financial Scale Value (₹)", titlefont=dict(color="#2CA02C"), tickfont=dict(color="#2CA02C")),
+                yaxis2=dict(title="Active Capacity Scale (MT)", titlefont=dict(color="#1F77B4"), tickfont=dict(color="#1F77B4"), overlaying='y', side='right'),
+                height=380,
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
         
     st.markdown("#### Annual Macro Allocation Accounting Spread")
     
@@ -434,3 +438,5 @@ with tabs[3]:
         # CRITICAL STYLING RULE: Target only the numeric columns explicitly when configuring styling templates
         fmt_target = {col: "₹{:,.0f}" for col in df_history_grid.columns}
         st.dataframe(df_history_grid.style.format(fmt_target), use_container_width=True)
+    else:
+        st.info("No annual records compiled for this specific facility identifier.")
