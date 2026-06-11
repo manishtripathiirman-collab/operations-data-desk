@@ -397,9 +397,9 @@ with tabs[3]:
         rent_trend_vals = [float(rent_row_raw[m].iloc[0]) if not rent_row_raw.empty else 0.0 for m in chronological_months]
         cap_trend_vals = [float(cap_row_raw[m].iloc[0]) if not cap_row_raw.empty else 0.0 for m in chronological_months]
         
-        # FIXED: Enforce a defensive check to prevent plotting ValueError crashes on completely empty assets
+        # Enforce a defensive check to prevent plotting ValueError crashes on completely empty or zero-value assets
         if sum(rev_trend_vals) == 0 and sum(rent_trend_vals) == 0 and sum(cap_trend_vals) == 0:
-            st.info(f"ℹ️ Selected property `{target_wh}` has zero active records or footprint tracking logged in the spreadsheet rows.")
+            st.info(f"ℹ️ Selected property `{target_wh}` has zero active records or active footprint tracking logged in the spreadsheet rows.")
         else:
             # Interactive dual-axis timeline chart showing dehire curves cleanly
             fig_trend = go.Figure()
@@ -407,6 +407,7 @@ with tabs[3]:
             fig_trend.add_trace(go.Scatter(x=chronological_months, y=rent_trend_vals, mode='lines+markers', name='Monthly Rent (₹)', line=dict(color='#D62728', width=2, dash='dot')))
             fig_trend.add_trace(go.Scatter(x=chronological_months, y=cap_trend_vals, mode='lines+markers', name='Storage Footprint (MT)', line=dict(color='#1F77B4', width=2), yaxis='y2'))
             
+            # FIXED: Guarded Axis assignment with exact primary overlay anchor ('y') string reference to prevent Plotly internal layout validation errors
             fig_trend.update_layout(
                 template="plotly_white",
                 title=f"Continuous Month-by-Month Sequence Analytics Vector: {target_wh}",
