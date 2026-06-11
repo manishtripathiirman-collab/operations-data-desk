@@ -22,6 +22,9 @@ def load_excel_data():
 
 try:
     df_raw, df_rent_details = load_excel_data()
+st.write("Unique Details types found:", list(df_raw["Details"].unique()))
+st.write("Sample data rows:", df_raw.head(5))
+st.stop()
 except Exception as e:
     st.error(f"⚠️ Error loading data: {e}")
     st.stop()
