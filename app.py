@@ -26,7 +26,6 @@ FY_COLORS = {
 # --------------------------------------------------------------------
 @st.cache_data
 def load_and_clean_warehouse_data(file_path):
-    # Safe multi-sheet reading from uploaded source file 
     try:
         df_raw_dirty = pd.read_excel(file_path, sheet_name="RAW Data")
         df_rent_dirty = pd.read_excel(file_path, sheet_name="Rent Data", skiprows=1)
@@ -77,13 +76,13 @@ except FileNotFoundError:
     st.stop()
 
 # --------------------------------------------------------------------
-# 2. RUNTIME CONTEXT EXTRACTOR (FLAT SHEET MAPPING STRATEGY)
+# 2. RUNTIME CONTEXT EXTRACTOR (BULLETPROOF MASKING STRATEGY)
 # --------------------------------------------------------------------
 def build_runtime_fy_dataset(fy_target):
     # Dynamically extract tracking variables mapped exactly to horizontal rows
-    rev_df = df_raw[df_raw["Type"] == "Rev"].set_index("CMP ID")
-    rent_df = df_raw[df_raw["Type"] == "Rent"].set_index("CMP ID")
-    cap_df = df_raw[df_raw["Type"] == "Cap"].set_index("CMP ID")
+    rev_df = df_raw[df_raw["Type"] == "Rev"]
+    rent_df = df_raw[df_raw["Type"] == "Rent"]
+    cap_df = df_raw[df_raw["Type"] == "Cap"]
     
     # Extract unique facilities to map coordinates safely
     unique_facilities = df_raw.drop_duplicates(subset=["CMP ID"]).copy()
@@ -93,15 +92,15 @@ def build_runtime_fy_dataset(fy_target):
         cid = f["CMP ID"]
         cluster = f["Cluster"]
         
-        # Pull parameters safely via index position maps
-        rev_val = rev_df.loc[cid, fy_target] if cid in rev_df.index else 0.0
-        rent_val = rent_df.loc[cid, fy_target] if cid in rent_df.index else 0.0
-        cap_val = cap_df.loc[cid, fy_target] if cid in cap_df.index else 0.0
+        # Filter down to the specific warehouse code to prevent lookup duplication crashes
+        rev_match = rev_df[rev_df["CMP ID"] == cid][fy_target]
+        rent_match = rent_df[rent_df["CMP ID"] == cid][fy_target]
+        cap_match = cap_df[cap_df["CMP ID"] == cid][fy_target]
         
-        # Handle cases where multiple records or duplicate rows slip into indexes
-        if isinstance(rev_val, pd.Series): rev_val = rev_val.iloc[0]
-        if isinstance(rent_val, pd.Series): rent_val = rent_val.iloc[0]
-        if isinstance(cap_val, pd.Series): cap_val = cap_val.iloc[0]
+        # Sum up values if duplicates exist, otherwise get the safe baseline float value
+        rev_val = float(rev_match.sum()) if not rev_match.empty else 0.0
+        rent_val = float(rent_match.sum()) if not rent_match.empty else 0.0
+        cap_val = float(cap_match.sum()) if not cap_match.empty else 0.0
         
         area_val = cap_val * MT_TO_SQFT_CONVERSION
         net_surplus = rev_val - rent_val
@@ -133,20 +132,4 @@ st.sidebar.markdown("---")
 selected_fy = st.sidebar.selectbox(
     "Target Fiscal Year Focus",
     options=available_fys,
-    index=min(1, len(available_fys)-1) # Defaults to FY 24-25 if present
-)
-
-# Extract changing capacity profiles matching current chosen timeline footprint bounds
-current_caps = df_raw[df_raw["Type"] == "Cap"][selected_fy]
-min_cap_val = int(current_caps.min()) if not current_caps.empty else 0
-max_cap_val = int(current_caps.max()) if not current_caps.empty else 100000
-
-capacity_range = st.sidebar.slider(
-    f"Active Capacity Boundary ({selected_fy})",
-    min_value=min_cap_val,
-    max_value=max_cap_val,
-    value=(min_cap_val, max_cap_val),
-    help="CRITICAL FILTER RULE: Slider values only limit Tab 1 views. Rest of history tools remain unfiltered to preserve lifecycle context."
-)
-
-# ----------------------------------------------------------------
+    index=min(1, len
