@@ -22,7 +22,7 @@ FY_COLORS = {
 }
 
 # --------------------------------------------------------------------
-# 1. DATA INGESTION & CLEANING LAYER
+# 1. DATA INGESTION & ROBUST CLEANING LAYER
 # --------------------------------------------------------------------
 @st.cache_data
 def load_and_clean_warehouse_data(file_path):
@@ -30,7 +30,7 @@ def load_and_clean_warehouse_data(file_path):
         df_raw_dirty = pd.read_excel(file_path, sheet_name="RAW Data")
         df_rent_dirty = pd.read_excel(file_path, sheet_name="Rent Data", skiprows=1)
         
-        # --- Clean RAW Data Sheet (Vertical Database Format) ---
+        # --- Clean RAW Data Sheet ---
         df_raw = df_raw_dirty.copy()
         df_raw.columns = [str(col).strip() for col in df_raw.columns]
         
@@ -39,33 +39,16 @@ def load_and_clean_warehouse_data(file_path):
             df_raw["Cluster"] = df_raw["Cluster"].astype(str).str.strip()
         if "Type" in df_raw.columns:
             df_raw["Type"] = df_raw["Type"].astype(str).str.strip()
-        if "Fiscal Year" in df_raw.columns:
-            df_raw["Fiscal Year"] = df_raw["Fiscal Year"].astype(str).str.strip()
-        if "Value" in df_raw.columns:
-            df_raw["Value"] = pd.to_numeric(df_raw["Value"], errors='coerce').fillna(0.0)
             
-        # Reshape the vertical format into a flat, horizontal analytical dataframe
-        df_portfolio = pd.pivot_table(
-            df_raw, 
-            values="Value", 
-            index=["CMP ID", "Cluster", "Fiscal Year"], 
-            columns="Type", 
-            aggfunc="sum"
-        ).reset_index()
-        
-        # Ensure standard metric columns exist to prevent missing-key errors
-        for metric in ["Rev", "Rent", "Cap"]:
-            if metric not in df_portfolio.columns:
-                df_portfolio[metric] = 0.0
+        # Clean the horizontal year columns explicitly
+        target_fys = ["FY 23-24", "FY 24-25", "FY 25-26"]
+        for fy in target_fys:
+            if fy in df_raw.columns:
+                df_raw[fy] = pd.to_numeric(df_raw[fy], errors='coerce').fillna(0.0)
             else:
-                df_portfolio[metric] = df_portfolio[metric].fillna(0.0)
+                df_raw[fy] = 0.0
                 
-        # Extract available unique fiscal years directly from the column entries
-        target_fys = sorted(df_portfolio["Fiscal Year"].unique().tolist())
-        if not target_fys:
-            target_fys = ["FY 23-24", "FY 24-25", "FY 25-26"]
-            
-        # --- Clean Rent Data Sheet Columns and Text Metrics ---
+        # --- Clean Rent Data Sheet ---
         df_rent = df_rent_dirty.copy()
         df_rent.columns = [str(col).strip() for col in df_rent.columns]
         
@@ -82,7 +65,7 @@ def load_and_clean_warehouse_data(file_path):
         df_rent["Monthly Revenue"] = pd.to_numeric(df_rent[rev_col], errors='coerce').fillna(0.0)
         df_rent["Monthly Rent"] = pd.to_numeric(df_rent[rent_col], errors='coerce').fillna(0.0)
         
-        return df_portfolio, df_rent, target_fys
+        return df_raw, df_rent, target_fys
 
     except Exception as e:
         st.error(f"🚨 Ingestion Layer Fatal Error: Failed to parse Excel sheets. Details: {str(e)}")
@@ -92,29 +75,58 @@ def load_and_clean_warehouse_data(file_path):
 target_excel_filename = "Rent Analysis Data.xlsx"
 
 try:
-    df_portfolio, df_rent, available_fys = load_and_clean_warehouse_data(target_excel_filename)
+    df_raw, df_rent, available_fys = load_and_clean_warehouse_data(target_excel_filename)
 except FileNotFoundError:
     st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository folder alongside this app script.")
     st.stop()
 
 # --------------------------------------------------------------------
-# 2. RUNTIME CONTEXT EXTRACTOR (POST-PIVOT PROCESSING)
+# 2. RUNTIME CONTEXT EXTRACTOR (PER-YEAR CROSS-SECTION TRANSFORMER)
 # --------------------------------------------------------------------
 def build_runtime_fy_dataset(fy_target):
-    # Isolate data rows for the targeted year
-    df_step = df_portfolio[df_portfolio["Fiscal Year"] == fy_target].copy()
+    # Separate types into dedicated lookup frames
+    rev_df = df_raw[df_raw["Type"] == "Rev"]
+    rent_df = df_raw[df_raw["Type"] == "Rent"]
+    cap_df = df_raw[df_raw["Type"] == "Cap"]
     
-    if df_step.empty:
-        # Fallback empty dataframe matching structure to prevent interface crashes
-        return pd.DataFrame(columns=["CMP ID", "Cluster", "Rev", "Rent", "Cap", "Area_SqFt", "Net_Surplus", "Rev_PSF", "Rent_PSF"])
+    # Get unique warehouses to generate structured rows
+    unique_facilities = df_raw.drop_duplicates(subset=["CMP ID"]).copy()
+    
+    records = []
+    for _, f in unique_facilities.iterrows():
+        cid = f["CMP ID"]
+        cluster = f["Cluster"]
         
-    df_step["Area_SqFt"] = df_step["Cap"] * MT_TO_SQFT_CONVERSION
-    df_step["Net_Surplus"] = df_step["Rev"] - df_step["Rent"]
-    
-    # Defensive handling for full dehires (Capacity = 0) to avoid DivisionByZero crashes
-    df_step["Rev_PSF"] = np.where(df_step["Area_SqFt"] > 0, df_step["Rev"] / df_step["Area_SqFt"], 0.0)
-    df_step["Rent_PSF"] = np.where(df_step["Area_SqFt"] > 0, df_step["Rent"] / df_step["Area_SqFt"], 0.0)
-    return df_step
+        # Filter down to matching keys and extract values from the selected target year column
+        rev_match = rev_df[rev_df["CMP ID"] == cid][fy_target]
+        rent_match = rent_df[rent_df["CMP ID"] == cid][fy_target]
+        cap_match = cap_df[cap_df["CMP ID"] == cid][fy_target]
+        
+        # Use sum fallback to cleanly handle any multi-line duplicates safely
+        rev_val = float(rev_match.sum()) if not rev_match.empty else 0.0
+        rent_val = float(rent_match.sum()) if not rent_match.empty else 0.0
+        cap_val = float(cap_match.sum()) if not cap_match.empty else 0.0
+        
+        area_val = cap_val * MT_TO_SQFT_CONVERSION
+        net_surplus = rev_val - rent_val
+        
+        # Protective division boundaries for full dehires (Capacity = 0)
+        rev_psf = (rev_val / area_val) if area_val > 0 else 0.0
+        rent_psf = (rent_val / area_val) if area_val > 0 else 0.0
+        
+        records.append({
+            "CMP ID": cid,
+            "Cluster": cluster,
+            "Rev": rev_val,
+            "Rent": rent_val,
+            "Cap": cap_val,
+            "Area_SqFt": area_val,
+            "Net_Surplus": net_surplus,
+            "Rev_PSF": rev_psf,
+            "Rent_PSF": rent_psf
+        })
+        
+    return pd.DataFrame(records)
 
 # --------------------------------------------------------------------
 # 3. GLOBAL CONTROLS & SIDEBAR ENVIRONMENT
@@ -129,7 +141,7 @@ selected_fy = st.sidebar.selectbox(
 )
 
 # Extract capacity profiles matching the current chosen timeline footprint bounds
-current_caps = df_portfolio[df_portfolio["Fiscal Year"] == selected_fy]["Cap"]
+current_caps = df_raw[df_raw["Type"] == "Cap"][selected_fy]
 min_cap_val = int(current_caps.min()) if not current_caps.empty else 0
 max_cap_val = int(current_caps.max()) if not current_caps.empty else 100000
 
@@ -157,7 +169,7 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader(f"Portfolio Financial & Footprint Summary Matrix — {selected_fy}")
     
-    # Extract data matching the selected year layout parameters
+    # Extract data matching the selected year column variables
     active_fy_df = build_runtime_fy_dataset(selected_fy)
     
     # Apply capacity slider restriction rules strictly to Tab 1
@@ -198,7 +210,7 @@ with tabs[0]:
         
         st.markdown("---")
         
-        # Charts Columns
+        # Charts Columns Layout
         viz_col1, viz_col2 = st.columns(2)
         with viz_col1:
             st.markdown("#### Top 10 Revenue Generating Clusters")
@@ -230,13 +242,13 @@ with tabs[1]:
     st.subheader("Year-on-Year Unit Rent Pricing Velocity Tracker")
     st.caption("🔒 Seasoned Asset Filter Active: Displays facilities tracking data for 2 or more years.")
     
-    # Compile standardized data horizons
+    # Compile standardized timeline chunks
     y23_base = build_runtime_fy_dataset("FY 23-24")
     y24_base = build_runtime_fy_dataset("FY 24-25")
     y25_base = build_runtime_fy_dataset("FY 25-26")
     
-    # Calculate operational presence maps cleanly
-    all_facilities = df_portfolio["CMP ID"].unique()
+    # Calculate active year counts for every property
+    all_facilities = df_raw["CMP ID"].unique()
     seasoned_list = []
     for cid in all_facilities:
         active_count = 0
@@ -246,7 +258,7 @@ with tabs[1]:
         if active_count >= 2:
             seasoned_list.append(cid)
             
-    # Assemble master records for qualified portfolio assets
+    # Assemble structured long format tracking arrays
     yoy_records = []
     for yr_lbl, yr_df in [("FY 23-24", y23_base), ("FY 24-25", y24_base), ("FY 25-26", y25_base)]:
         for _, row in yr_df.iterrows():
@@ -260,11 +272,11 @@ with tabs[1]:
                 })
                 
     if not yoy_records:
-        st.info("No seasoned properties matching history rules discovered.")
+        st.info("No seasoned properties matching history criteria discovered.")
     else:
         df_yoy_final = pd.DataFrame(yoy_records)
         
-        # Multiselect filter search layout component
+        # Interactive Multi-Select Filter Search block
         all_seasoned_codes = sorted(df_yoy_final["CMP ID"].unique())
         target_assets = st.multiselect(
             "Isolate Specific Qualified Assets (Leave empty to view all standard portfolio assets):", 
@@ -275,7 +287,7 @@ with tabs[1]:
         if target_assets:
             filtered_yoy = filtered_yoy[filtered_yoy["CMP ID"].isin(target_assets)]
             
-        # Grouped Clustered Bar Plot Chart
+        # Grouped Clustered Bar Plot Chart Tracker
         fig_yoy = px.bar(
             filtered_yoy, x="CMP ID", y="Rent_PSF", color="Fiscal Year",
             barmode="group", color_discrete_map=FY_COLORS, template="plotly_white",
@@ -303,7 +315,7 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Arbitrary Milestone Timeline Cross-Examiner Engine")
     
-    # Dropdown Selection Selectors
+    # Dropdown Year Selector Nodes
     col_x, col_y = st.columns(2)
     with col_x: year_alpha = st.selectbox("Select Timeline Baseline (Year 1)", options=available_fys, index=0)
     with col_y: year_beta = st.selectbox("Select Timeline Target (Year 2)", options=available_fys, index=min(2, len(available_fys)-1))
@@ -315,11 +327,11 @@ with tabs[2]:
     df_beta = build_runtime_fy_dataset(year_beta)
     
     if df_alpha.empty or df_beta.empty:
-        st.info("Missing comparative structural profiles inside dataset.")
+        st.info("Missing comparative historical vectors within database.")
     else:
         merged_comp = pd.merge(df_alpha, df_beta, on=["CMP ID", "Cluster"], suffixes=("_Base", "_Comp"))
         
-        # Dual Bar Concentric Chart Visual Engine
+        # Dual Bar Concentric Chart Core Engine
         fig_compare = go.Figure()
         # Baseline Parameters (Year 1)
         fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rev_PSF_Base"], name=f"Rev PSF ({year_alpha})", marker_color="#A6C8E0", offsetgroup=0))
@@ -331,7 +343,7 @@ with tabs[2]:
         fig_compare.update_layout(template="plotly_white", barmode="group", yaxis_title="Unit Financial Metric Scale (₹ / Sq. Ft.)", xaxis_tickangle=-45, height=480)
         st.plotly_chart(fig_compare, use_container_width=True)
         
-        # Ledger Grid Table Matrix
+        # Ledger Matrix Comparison Table Grid
         st.markdown("#### Performance Matrix Dataset Comparison")
         compare_matrix = merged_comp[["CMP ID", "Cluster", "Rev_PSF_Base", "Rent_PSF_Base", "Rev_PSF_Comp", "Rent_PSF_Comp"]].copy()
         st.dataframe(
@@ -348,11 +360,11 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("Granular Individual Property Footprint Lifecycle Review")
     
-    # Alphabetical Facility Profile Lookup
-    alphabetical_codes = sorted(df_portfolio["CMP ID"].unique().tolist()) if not df_portfolio.empty else []
+    # Facility Lookup Menu
+    alphabetical_codes = sorted(df_raw["CMP ID"].unique().tolist()) if not df_raw.empty else []
     target_wh = st.selectbox("Select Specific Target Facility for Deep-Dive Analysis:", options=alphabetical_codes)
     
-    # Monthly Timeline Graph Strategy
+    # Monthly Timeline Scatter Graph
     monthly_slice = df_rent[df_rent["Warehouse Code Normalized"] == target_wh]
     
     if monthly_slice.empty:
@@ -366,7 +378,7 @@ with tabs[3]:
         
     st.markdown("#### Annual Macro Allocation Accounting Spread")
     
-    # Consolidated Summary Matrix Data Assembly
+    # Matrix Summary Processing Sequence
     history_rows = []
     for yr in available_fys:
         fy_df = build_runtime_fy_dataset(yr)
@@ -383,6 +395,6 @@ with tabs[3]:
     if history_rows:
         df_history_grid = pd.DataFrame(history_rows).set_index("Year").T
         
-        # CRITICAL STYLING RULE: Target only the numeric year columns explicitly when configuring currency formatting string templates
+        # CRITICAL STYLING RULE: Target only the numeric columns explicitly when formatting
         fmt_target = {col: "₹{:,.0f}" for col in df_history_grid.columns}
         st.dataframe(df_history_grid.style.format(fmt_target), use_container_width=True)
