@@ -14,13 +14,10 @@ st.markdown("---")
 @st.cache_data
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
-    
-    # Standardize casing and strip spaces immediately upon ingestion
     raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip().str.upper()
     raw_df["Details"] = raw_df["Details"].astype(str).str.strip()
-    
-    rent_details_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="Rent Data", skiprows=1, engine="openpyxl")
-    return raw_df, rent_details_df
+    rent_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="Rent Data", skiprows=1, engine="openpyxl")
+    return raw_df, rent_df
 
 try:
     df_raw, df_rent_details = load_excel_data()
@@ -36,21 +33,10 @@ min_cap = int(df_raw["Capacity"].min())
 max_cap = int(df_raw["Capacity"].max())
 selected_capacity = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_cap, max_cap, (min_cap, max_cap))
 
-# Apply baseline filtering based on sidebar selections
 df_filtered_raw = df_raw[
     (df_raw["Capacity"] >= selected_capacity[0]) & 
     (df_raw["Capacity"] <= selected_capacity[1])
 ]
-
-# SAFE UNDER-THE-HOOD DATA INSPECTOR (In Sidebar to verify text matches)
-st.sidebar.markdown("---")
-with st.sidebar.expander("🔍 Inspect Hidden Excel Formatting"):
-    st.write("**Exact labels found in Details column:**")
-    st.code(list(df_raw["Details"].unique()))
-    st.write("**Data types of your Year Columns:**")
-    st.write(f"FY 23-24 type: {df_raw['FY 23-24'].dtype}")
-    st.write(f"FY 24-25 type: {df_raw['FY 24-25'].dtype}")
-    st.write(f"FY 25-26 type: {df_raw['FY 25-26'].dtype}")
 
 # 4. TABBED LAYOUT CREATION
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -85,7 +71,7 @@ with tab1:
     
     st.markdown("#### 📐 Spatial Unit Rate Performance Metrics")
     s1, s2, s3 = st.columns(3)
-    s1.metric("🏢 Total Area Leased (Footprint)", f"{total_sqft_leased:,.0f} Sq. Ft.")
+    s1.metric("🏢 Total Area Leased", f"{total_sqft_leased:,.0f} Sq. Ft.")
     s2.metric("🟢 Macro Revenue / Sq. Ft.", f"₹{rev_per_sqft:.2f}/sqft")
     s3.metric("🔴 Macro Rent / Sq. Ft.", f"₹{rent_per_sqft:.2f}/sqft")
     
@@ -94,86 +80,4 @@ with tab1:
     
     with chart_col1:
         st.subheader("🏆 Top 10 Revenue Generating Clusters")
-        top_rev = df_filtered_raw[df_filtered_raw["Details"] == "Rev"].nlargest(10, selected_fy)
-        fig_bar = px.bar(top_rev, x=selected_fy, y="CMP ID", orientation='h', color=selected_fy, color_continuous_scale="Viridis")
-        fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
-        st.plotly_chart(fig_bar, use_container_width=True)
-        
-    with chart_col2:
-        st.subheader("🎯 Overhead Efficiency Scatter Profiler")
-        pivoted = df_filtered_raw.pivot_table(index=["CMP ID", "Capacity"], columns="Details", values=selected_fy).reset_index()
-        if "Rent" in pivoted.columns and "Rev" in pivoted.columns:
-            fig_scatter = px.scatter(pivoted, x="Rent", y="Rev", size="Capacity", hover_name="CMP ID", color="Rev", color_continuous_scale="RdYlGn", trendline="ols")
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-# =========================================================================
-# TAB 2: PER SQUARE FOOT YoY ANALYZER (Distinct Color Fix)
-# =========================================================================
-with tab2:
-    st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
-    st.markdown("Monitor YoY real estate spatial efficiency for long-term operational assets.")
-    
-    years = ["FY 23-24", "FY 24-25", "FY 25-26"]
-    summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
-    
-    summary_df["Active_Years_Count"] = (summary_df["FY 23-24"] > 0).astype(int) + (summary_df["FY 24-25"] > 0).astype(int) + (summary_df["FY 25-26"] > 0).astype(int)
-    seasoned_ids = summary_df[summary_df["Active_Years_Count"] >= 2]["CMP ID"].unique()
-    
-    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(seasoned_ids)) & (summary_df["Details"] == "Rent")].copy()
-    
-    if not seasoned_rent.empty:
-        seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
-        
-        for yr in years:
-            seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
-            
-        st.markdown("---")
-        selected_warehouses = st.multiselect(
-            "🔍 Search and Select Specific Warehouses to Display (Leave blank to see all matched assets):",
-            options=sorted(list(seasoned_rent["CMP ID"].unique())),
-            placeholder="Type or click to choose..."
-        )
-            
-        if selected_warehouses:
-            display_rent_df = seasoned_rent[seasoned_rent["CMP ID"].isin(selected_warehouses)].copy()
-        else:
-            display_rent_df = seasoned_rent.copy()
-            
-        psf_cols = [f"{yr}_PSF" for yr in years]
-        melt_psf = display_rent_df.melt(
-            id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
-            value_vars=psf_cols,
-            var_name="Fiscal Year",
-            value_name="Rent PSF"
-        )
-        melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
-        
-        # FIXED: Explicitly map your requested high-contrast distinct color scheme mapping
-        color_map = {
-            "FY 23-24": "#2CA02C",  # Green
-            "FY 24-25": "#FFD700",  # Yellow / Gold
-            "FY 25-26": "#D62728"   # Magenta / Deep Crimson Accent
-        }
-        
-        fig_psf = px.bar(
-            melt_psf,
-            x="CMP ID",
-            y="Rent PSF",
-            color="Fiscal Year",
-            barmode="group",
-            title="Year-on-Year Rent Cost per Square Foot Comparison (1 MT = 6 Sq. Ft.)",
-            labels={"Rent PSF": "Rent per Sq. Ft. (₹)", "CMP ID": "Warehouse Code"},
-            color_discrete_map=color_map
-        )
-        fig_psf.update_layout(xaxis={'categoryorder':'category ascending'})
-        st.plotly_chart(fig_psf, use_container_width=True)
-        
-        st.subheader("📊 Spatial Efficiency Ledger")
-        display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
-        ledger_df = display_rent_df[display_cols].copy()
-        
-        st.dataframe(
-            ledger_df.style.format({
-                "Capacity": "{:,.0f} MT",
-                "Estimated SqFt": "{:,.0f} Sq. Ft.",
-                "FY 23-24_PSF": "₹{:.2f}/sqft",
+        top_rev = df_filtered_raw
