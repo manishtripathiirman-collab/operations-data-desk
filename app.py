@@ -15,7 +15,7 @@ def load_data():
     raw["CMP ID"] = raw["CMP ID"].astype(str).str.strip().str.upper()
     raw["Details"] = raw["Details"].astype(str).str.strip()
     
-    # Standardize all historical fiscal pillars to floating numbers
+    # Force clean numerical float tracking values
     for y in ["FY 23-24", "FY 24-25", "FY 25-26"]:
         if y in raw.columns:
             raw[y] = pd.to_numeric(raw[y], errors='coerce').fillna(0)
@@ -34,10 +34,11 @@ selected_fy = st.sidebar.selectbox("Select Target Fiscal Year (Tab 1)", ["FY 23-
 min_c, max_c = int(df_raw["Capacity"].min()), int(df_raw["Capacity"].max())
 s_cap = st.sidebar.slider("Filter by Warehouse Capacity (MT)", min_c, max_c, (min_c, max_c))
 
-# Filter applied EXCLUSIVELY to Tab 1 to prevent empty sets in other tabs
+# Filter context applied exclusively to Tab 1 to preserve records across other views
 df_f_raw = df_raw[(df_raw["Capacity"] >= s_cap[0]) & (df_raw["Capacity"] <= s_cap[1])]
 
-t1, t2, t3, t4 = st.tabs([
+# FIXED: Explicitly initializing all 4 structural tabs to resolve NameErrors
+tab1, tab2, tab3, tab4 = st.tabs([
     "📈 Portfolio Performance Summary", 
     "🔄 YoY Sq. Ft. Rent Analyzer", 
     "📊 Compare Two Years", 
@@ -47,7 +48,7 @@ t1, t2, t3, t4 = st.tabs([
 # =========================================================================
 # TAB 1: PORTFOLIO SUMMARY
 # =========================================================================
-with t1:
+with tab1:
     st.header("📌 Macro Financial & Spatial Summary")
     rent_tot = df_f_raw[df_f_raw["Details"] == "Rent"][selected_fy].sum()
     rev_tot = df_f_raw[df_f_raw["Details"] == "Rev"][selected_fy].sum()
@@ -73,6 +74,7 @@ with t1:
         st.subheader("🏆 Top 10 Revenue Generating Clusters")
         top_df = df_f_raw[df_f_raw["Details"] == "Rev"].nlargest(10, selected_fy)
         fig = px.bar(top_df, x=selected_fy, y="CMP ID", orientation='h', color_continuous_scale="Viridis")
+        # FIXED: Removed 'width':'stretch' layout parameter bug to stop the ValueError crash
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
     with c_col2:
@@ -82,9 +84,9 @@ with t1:
             st.plotly_chart(px.scatter(pv, x="Rent", y="Rev", size="Capacity", hover_name="CMP ID", color="Rev", color_continuous_scale="RdYlGn", trendline="ols"), use_container_width=True)
 
 # =========================================================================
-# TAB 2: YoY SQ FT RENT ANALYZER (Uses df_raw directly)
+# TAB 2: YoY SQ FT RENT ANALYZER
 # =========================================================================
-with t2:
+with tab2:
     st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
     st.markdown("Monitor YoY real estate spatial efficiency for assets active for at least two years.")
     yrs = ["FY 23-24", "FY 24-25", "FY 25-26"]
@@ -104,7 +106,8 @@ with t2:
         m_psf = disp_df.melt(id_vars=["CMP ID", "Capacity", "Est_SqFt"], value_vars=[f"{y}_PSF" for y in yrs], var_name="Fiscal Year", value_name="Rent PSF")
         m_psf["Fiscal Year"] = m_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
         
-        fig_psf = px.bar(m_psf, x="CMP ID", y="Rent PSF", color="Fiscal Year", barmode="group", title="Year-on-Year Rent Cost per Square Foot (1 MT = 6 Sq. Ft.)", color_discrete_map={"FY 23-24": "#2CA02C", "FY 24-25": "#FFD700", "FY 25-26": "#D62728"})
+        color_map = {"FY 23-24": "#2CA02C", "FY 24-25": "#FFD700", "FY 25-26": "#D62728"}
+        fig_psf = px.bar(m_psf, x="CMP ID", y="Rent PSF", color="Fiscal Year", barmode="group", title="Year-on-Year Rent Cost per Square Foot (1 MT = 6 Sq. Ft.)", color_discrete_map=color_map)
         st.plotly_chart(fig_psf, use_container_width=True)
         
         st.subheader("📊 Spatial Efficiency Ledger")
@@ -113,9 +116,9 @@ with t2:
         st.info("No long-term operational facilities found matching benchmarks.")
 
 # =========================================================================
-# TAB 3: DUAL-YEAR COMPARE TWO YEARS (Uses df_raw directly)
+# TAB 3: DUAL-YEAR COMPARE TWO YEARS
 # =========================================================================
-with t3:
+with tab3:
     st.header("📊 Comparative Dual-Period Unit Assessment")
     c1, c2 = st.columns(2)
     b_yr = c1.selectbox("Select Baseline Year", ["FY 23-24", "FY 24-25", "FY 25-26"], index=0)
@@ -159,7 +162,7 @@ with t3:
             st.info("No active locations recorded across target timelines.")
 
 # =========================================================================
-# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN (Uses df_raw directly)
+# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
 # =========================================================================
 with tab4:
     st.header("🔍 Granular Asset Investigation Desk")
