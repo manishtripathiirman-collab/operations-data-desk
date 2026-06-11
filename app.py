@@ -77,7 +77,7 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: YoY MULTI-YEAR ANALYZER (Syntax Error Fixed)
+# TAB 2: YoY MULTI-YEAR ANALYZER (Syntax Errors Fixed)
 # =========================================================================
 with tab2:
     st.header("🔄 Multi-Year Performance Comparison")
@@ -101,4 +101,73 @@ with tab2:
     
     if len(seasoned_data) > 0:
         target_view = st.radio("Choose Comparison Metric", ["Revenue Grouping", "Rent Cost Grouping"], horizontal=True)
-        mapped_detail = "Rev" if
+        
+        # Fixed multi-line split bug
+        if "Revenue" in target_view:
+            mapped_detail = "Rev"
+        else:
+            mapped_detail = "Rent"
+        
+        chart_df = seasoned_data[seasoned_data["Details"] == mapped_detail]
+        
+        chart_melt = chart_df.melt(
+            id_vars=["CMP ID", "Capacity"], 
+            value_vars=years, 
+            var_name="Fiscal Year", 
+            value_name="Value"
+        )
+        
+        fig_yoy = px.bar(
+            chart_melt, 
+            x="CMP ID", 
+            y="Value", 
+            color="Fiscal Year", 
+            barmode="group",
+            title=f"Year-over-Year {mapped_detail} Growth Matrix",
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        st.plotly_chart(fig_yoy, use_container_width=True)
+        
+        st.subheader("📊 Performance Ledger")
+        
+        rename_dict = {
+            "FY 23-24": f"FY 23-24 ({mapped_detail})",
+            "FY 24-25": f"FY 24-25 ({mapped_detail})",
+            "FY 25-26": f"FY 25-26 ({mapped_detail})"
+        }
+        
+        flat_ledger = chart_df.rename(columns=rename_dict).drop(columns=["Details"])
+        
+        st.dataframe(
+            flat_ledger.style.format({
+                "Capacity": "{:,.0f} MT",
+                f"FY 23-24 ({mapped_detail})": "₹{:,.0f}",
+                f"FY 24-25 ({mapped_detail})": "₹{:,.0f}",
+                f"FY 25-26 ({mapped_detail})": "₹{:,.0f}"
+            }),
+            use_container_width=True
+        )
+    else:
+        st.info("No facilities found with active financial entries recorded consistently across all 3 fiscal periods.")
+
+# =========================================================================
+# TAB 3: INDIVIDUAL WAREHOUSE DRILLDOWN
+# =========================================================================
+with tab3:
+    st.header("🔍 Granular Asset Investigation Desk")
+    
+    selected_facility = st.selectbox("Select Target Facility to Inspect", df_raw["CMP ID"].unique())
+    facility_profile = df_raw[df_raw["CMP ID"] == selected_facility]
+    
+    month_cols = [col for col in df_raw.columns if any(year in str(col) for year in ["2023", "2024", "2025", "2026"])]
+    
+    if not facility_profile.empty and len(month_cols) > 0:
+        cap_val = facility_profile["Capacity"].values[0]
+        st.metric("Storage Volume Capacity (MT)", f"{cap_val:,} MT")
+        
+        timeline_df = facility_profile.melt(id_vars=["Details"], value_vars=month_cols, var_name="Month", value_name="Amount")
+        timeline_df["Month"] = pd.to_datetime(timeline_df["Month"])
+        timeline_df = timeline_df.sort_values("Month")
+        
+        fig_time = px.line(timeline_df, x="Month", y="Amount", color="Details", markers=True, color_discrete_map={"Rent": "#EF553B", "Rev": "#00CC96"})
+        st.plotly_chart(fig_time, use_container_width=True)
