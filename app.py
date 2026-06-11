@@ -179,7 +179,216 @@ with tabs[0]:
         # High-Impact Performance Metrics Calculation
         total_rev = filtered_tab1["Rev"].sum()
         total_rent = filtered_tab1["Rent"].sum()
-        total_surplus = filtered_tab1["Net_Surplus"].sum()
+        net_contribution = total_rev - total_rent
         rent_efficiency = (total_rent / total_rev * 100) if total_rev > 0 else 0.0
         
-        total_area_
+        # Spatial Metrics Conversion Block
+        unique_warehouses = filtered_tab1.drop_duplicates(subset=["CMP ID"])
+        total_capacity_mt = unique_warehouses["Cap"].sum()
+        total_area_sqft = total_capacity_mt * MT_TO_SQFT_CONVERSION
+        
+        macro_rev_psf = (total_rev / total_area_sqft) if total_area_sqft > 0 else 0.0
+        macro_rent_psf = (total_rent / total_area_sqft) if total_area_sqft > 0 else 0.0
+        
+        # UI Metrics Display Row 1
+        row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
+        row1_col1.metric("Total Revenue", f"₹{total_rev:,.2f}")
+        row1_col2.metric("Total Fixed Rent", f"₹{total_rent:,.2f}")
+        row1_col3.metric("Net Contribution Surplus", f"₹{net_contribution:,.2f}")
+        row1_col4.metric("Rent-to-Revenue Efficiency", f"{rent_efficiency:.2f}%")
+        
+        st.markdown("---")
+        
+        # UI Metrics Display Row 2
+        row2_col1, row2_col2, row2_col3 = st.columns(3)
+        row2_col1.metric("Total Area Leased", f"{total_area_sqft:,.0f} Sq. Ft.", f"{total_capacity_mt:,.0f} MT")
+        row2_col2.metric("Macro Revenue / Sq. Ft.", f"₹{macro_rev_psf:,.2f}/sf")
+        row2_col3.metric("Macro Rent / Sq. Ft.", f"₹{macro_rent_psf:,.2f}/sf")
+        
+        st.markdown("---")
+        
+        # Parallel Visualizations Layout
+        viz_col1, viz_col2 = st.columns(2)
+        with viz_col1:
+            st.markdown("#### Top 10 Revenue Generating Clusters")
+            cluster_data = filtered_tab1.groupby("Cluster")["Rev"].sum().reset_index()
+            cluster_data = cluster_data.sort_values(by="Rev", ascending=True).tail(10)
+            fig_cluster = px.bar(
+                cluster_data, x="Rev", y="Cluster", orientation='h', 
+                template="plotly_white", color="Rev", color_continuous_scale="Agsunset",
+                labels={"Rev": "Total Revenue (₹)", "Cluster": "Cluster"}
+            )
+            fig_cluster.update_layout(margin=dict(l=20, r=20, t=10, b=20), height=380)
+            st.plotly_chart(fig_cluster, use_container_width=True)
+            
+        with viz_col2:
+            st.markdown("#### Financial Allocation Profiler (Rent vs Revenue)")
+            fig_scatter = px.scatter(
+                filtered_tab1, x="Rev", y="Rent", hover_name="CMP ID", 
+                labels={"Rev": "Revenue (₹)", "Rent": "Rent (₹)"}, 
+                trendline="ols", template="plotly_white"
+            )
+            fig_scatter.update_traces(marker=dict(size=12, color="#1F77B4", opacity=0.75))
+            fig_scatter.update_layout(margin=dict(l=20, r=20, t=10, b=20), height=380)
+            st.plotly_chart(fig_scatter, use_container_width=True)
+
+# ====================================================================
+# TAB 2: YOY SQ. FT. RENT ANALYZER
+# ====================================================================
+with tabs[1]:
+    st.subheader("Year-on-Year Unit Rent Pricing Velocity Tracker")
+    st.caption("🔒 Seasoned Asset Filter Active: Displays facilities tracking data for 2 or more years.")
+    
+    # Process histories accurately via context building block
+    y23_base = build_runtime_fy_dataset("FY 23-24")
+    y24_base = build_runtime_fy_dataset("FY 24-25")
+    y25_base = build_runtime_fy_dataset("FY 25-26")
+    
+    # Map out how many years each warehouse shows active leased tracking > 0
+    active_tracker = pd.DataFrame({
+        "CMP ID": y24_base["CMP ID"],
+        "Y23_Active": y23_base["Cap"] > 0,
+        "Y24_Active": y24_base["Cap"] > 0,
+        "Y25_Active": y25_base["Cap"] > 0
+    })
+    active_tracker["Total_Active_Years"] = active_tracker[["Y23_Active", "Y24_Active", "Y25_Active"]].sum(axis=1)
+    seasoned_list = active_tracker[active_tracker["Total_Active_Years"] >= 2]["CMP ID"].tolist()
+    
+    # Build a clean melted tracking matrix for chart configurations
+    yoy_records = []
+    for yr_lbl, yr_df in [("FY 23-24", y23_base), ("FY 24-25", y24_base), ("FY 25-26", y25_base)]:
+        for _, row in yr_df.iterrows():
+            if row["CMP ID"] in seasoned_list and row["Cap"] > 0:
+                yoy_records.append({
+                    "CMP ID": row["CMP ID"],
+                    "Cluster": row["Cluster"],
+                    "Fiscal Year": yr_lbl,
+                    "Rent_PSF": row["Rent_PSF"],
+                    "Area_SqFt": row["Area_SqFt"]
+                })
+    df_yoy_final = pd.DataFrame(yoy_records)
+    
+    if df_yoy_final.empty:
+        st.info("No seasoned properties found across history files.")
+    else:
+        # Interactive Select Filter
+        all_seasoned_codes = sorted(df_yoy_final["CMP ID"].unique())
+        target_assets = st.multiselect(
+            "Isolate Specific Qualified Assets (Leave empty to view all standard portfolio assets):", 
+            options=all_seasoned_codes, key="tab2_multiselect"
+        )
+        
+        filtered_yoy = df_yoy_final.copy()
+        if target_assets:
+            filtered_yoy = filtered_yoy[filtered_yoy["CMP ID"].isin(target_assets)]
+            
+        # Year over Year Grouped Clustered Bar Chart
+        fig_yoy = px.bar(
+            filtered_yoy, x="CMP ID", y="Rent_PSF", color="Fiscal Year",
+            barmode="group", color_discrete_map=FY_COLORS, template="plotly_white",
+            labels={"Rent_PSF": "Rent Rate (₹ / Sq. Ft.)", "CMP ID": "Warehouse Code ID"}
+        )
+        fig_yoy.update_layout(xaxis_tickangle=-45, height=450)
+        st.plotly_chart(fig_yoy, use_container_width=True)
+        
+        # Formatted Ledger Matrix Grid
+        st.markdown("#### Dynamic Area & Unit Pricing Ledger")
+        ledger_pivot = filtered_yoy.pivot(index=["CMP ID", "Cluster"], columns="Fiscal Year", values=["Area_SqFt", "Rent_PSF"])
+        
+        fmt_config = {}
+        for yr in ["FY 23-24", "FY 24-25", "FY 25-26"]:
+            if ("Area_SqFt", yr) in ledger_pivot.columns:
+                fmt_config[("Area_SqFt", yr)] = "{:,.0f} Sq. Ft."
+            if ("Rent_PSF", yr) in ledger_pivot.columns:
+                fmt_config[("Rent_PSF", yr)] = "₹{:.2f}/sf"
+            
+        st.dataframe(ledger_pivot.fillna(0.0).style.format(fmt_config), use_container_width=True)
+
+# ====================================================================
+# TAB 3: COMPARE TWO YEARS
+# ====================================================================
+with tabs[2]:
+    st.subheader("Arbitrary Milestone Timeline Cross-Examiner Engine")
+    
+    # Dual Sidebar Selection Toggles
+    col_x, col_y = st.columns(2)
+    with col_x: year_alpha = st.selectbox("Select Timeline Baseline (Year 1)", options=available_fys, index=0)
+    with col_y: year_beta = st.selectbox("Select Timeline Target (Year 2)", options=available_fys, index=min(2, len(available_fys)-1))
+    
+    if year_alpha == year_beta:
+        st.warning("⚠️ Baseline and Target profiles are uniform. Select different historical years to generate variance spreads.")
+        
+    df_alpha = build_runtime_fy_dataset(year_alpha)
+    df_beta = build_runtime_fy_dataset(year_beta)
+    
+    merged_comp = pd.merge(df_alpha, df_beta, on=["CMP ID", "Cluster"], suffixes=("_Base", "_Comp"))
+    
+    # Visual Concentric Overlay Engine Chart
+    fig_compare = go.Figure()
+    # Baseline Parameters (Year 1)
+    fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rev_PSF_Base"], name=f"Rev PSF ({year_alpha})", marker_color="#A6C8E0", offsetgroup=0))
+    fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rent_PSF_Base"], name=f"Rent PSF ({year_alpha})", marker_color="#1F77B4", width=0.2, offsetgroup=0))
+    # Target Parameters (Year 2)
+    fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rev_PSF_Comp"], name=f"Rev PSF ({year_beta})", marker_color="#FFC19E", offsetgroup=1))
+    fig_compare.add_trace(go.Bar(x=merged_comp["CMP ID"], y=merged_comp["Rent_PSF_Comp"], name=f"Rent PSF ({year_beta})", marker_color="#FF7F0E", width=0.2, offsetgroup=1))
+    
+    fig_compare.update_layout(template="plotly_white", barmode="group", yaxis_title="Unit Financial Metric Scale (₹ / Sq. Ft.)", xaxis_tickangle=-45, height=480)
+    st.plotly_chart(fig_compare, use_container_width=True)
+    
+    # Ledger Grid Table Matrix
+    st.markdown("#### Performance Matrix Dataset Comparison")
+    compare_matrix = merged_comp[["CMP ID", "Cluster", "Rev_PSF_Base", "Rent_PSF_Base", "Rev_PSF_Comp", "Rent_PSF_Comp"]].copy()
+    st.dataframe(
+        compare_matrix.style.format({
+            "Rev_PSF_Base": "₹{:.2f}",
+            "Rent_PSF_Base": "₹{:.2f}",
+            "Rev_PSF_Comp": "₹{:.2f}",
+            "Rent_PSF_Comp": "₹{:.2f}"
+        }),
+        use_container_width=True
+    )
+
+# ====================================================================
+# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
+# ====================================================================
+with tabs[3]:
+    st.subheader("Granular Individual Property Footprint Lifecycle Review")
+    
+    # Dropdown Facility Selector
+    alphabetical_codes = sorted(df_raw["CMP ID"].unique())
+    target_wh = st.selectbox("Select Specific Target Facility for Deep-Dive Analysis:", options=alphabetical_codes)
+    
+    # Monthly Timeline Graph
+    monthly_slice = df_rent[df_rent["Warehouse Code Normalized"] == target_wh]
+    
+    if monthly_slice.empty:
+        st.info("📊 No granular sub-month logging rows detected for this asset ID.")
+    else:
+        fig_trend = go.Figure()
+        fig_trend.add_trace(go.Scatter(x=monthly_slice["Month"], y=monthly_slice["Monthly Revenue"], mode='lines+markers', name='Monthly Revenue Channel', line=dict(color='#2CA02C', width=3)))
+        fig_trend.add_trace(go.Scatter(x=monthly_slice["Month"], y=monthly_slice["Monthly Rent"], mode='lines+markers', name='Monthly Rent Outflow', line=dict(color='#D62728', width=2, dash='dot')))
+        fig_trend.update_layout(template="plotly_white", title=f"Continuous Operational Sequence Tracker for Asset: {target_wh}", yaxis_title="Financial Value Scales (₹)", height=360)
+        st.plotly_chart(fig_trend, use_container_width=True)
+        
+    st.markdown("#### Annual Macro Allocation Accounting Spread")
+    
+    # Consolidated Summary Matrix Data Assembly
+    history_rows = []
+    for yr in available_fys:
+        fy_df = build_runtime_fy_dataset(yr)
+        match_row = fy_df[fy_df["CMP ID"] == target_wh]
+        if not match_row.empty:
+            r = match_row.iloc[0]
+            history_rows.append({
+                "Year": yr,
+                "Rev": r["Rev"],
+                "Rent": r["Rent"],
+                "Net Margin surplus": r["Net_Surplus"]
+            })
+            
+    if history_rows:
+        df_history_grid = pd.DataFrame(history_rows).set_index("Year").T
+        
+        # CRITICAL STYLING RULE: Target only the numeric year columns explicitly when configuring currency formatting string templates
+        fmt_target = {col: "₹{:,.0f}" for col in df_history_grid.columns}
+        st.dataframe(df_history_grid.style.format(fmt_target), use_container_width=True)
