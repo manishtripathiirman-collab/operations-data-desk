@@ -11,6 +11,8 @@ st.markdown("---")
 
 # 2. LOAD DATA DIRECTLY FROM YOUR EXCEL WORKBOOK (.XLSX)
 @st.cache_data
+# 2. LOAD DATA DIRECTLY FROM YOUR EXCEL WORKBOOK (.XLSX)
+@st.cache_data
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
     rent_details_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="Rent Data", engine="openpyxl")
@@ -18,10 +20,13 @@ def load_excel_data():
 
 try:
     df_raw, df_rent_details = load_excel_data()
+    # THIS WILL PRINT THE EXACT HEADERS ON YOUR SCREEN
+    st.write("Headers found in RAW Data:", list(df_raw.columns))
+    st.write("Headers found in Rent Data:", list(df_rent_details.columns))
+    st.stop() # Temporarily pause the app here
 except Exception as e:
     st.error(f"⚠️ Error loading data: {e}")
     st.stop()
-
 # 3. GLOBAL CONTROL FILTERS (SIDEBAR)
 st.sidebar.header("🎛️ Page Filters")
 selected_fy = st.sidebar.selectbox("Select Target Fiscal Year", ["FY 23-24", "FY 24-25", "FY 25-26"], index=1)
