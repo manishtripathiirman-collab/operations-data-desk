@@ -40,7 +40,7 @@ df_filtered_raw = df_raw[
 ]
 
 # 4. TABBED LAYOUT CREATION
-tab1, tab2, tab3 = st.tabs(["📈 Portfolio Performance Summary", "🔄 Year-on-Year (YoY) Analyzer", "🔍 Individual Warehouse Drilldown"])
+tab1, tab2, tab3 = st.tabs(["📈 Portfolio Performance Summary", "🔄 YoY Sq. Ft. Rent Analyzer", "🔍 Individual Warehouse Drilldown"])
 
 # =========================================================================
 # TAB 1: PORTFOLIO SUMMARY
@@ -77,78 +77,74 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: YoY MULTI-YEAR ANALYZER (Syntax Errors Fixed)
+# TAB 2: ADJUSTED PER SQUARE FOOT YoY ANALYZER (Capacity * 6)
 # =========================================================================
 with tab2:
-    st.header("🔄 Multi-Year Performance Comparison")
-    st.markdown("Showing warehouses with full operational records stretching over multiple fiscal periods.")
+    st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
+    st.markdown("Isolating warehouses with continuous records to monitor YoY real estate spatial efficiency.")
     
     years = ["FY 23-24", "FY 24-25", "FY 25-26"]
-    
-    # Group raw data cleanly
     summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
     
-    # Identify unique IDs tracked through all milestones
-    rev_mask = summary_df["Details"] == "Rev"
+    # Isolate stable warehouses with revenue entries across all milestones
     valid_ids = summary_df[
-        rev_mask & 
+        (summary_df["Details"] == "Rev") & 
         (summary_df["FY 23-24"] > 0) & 
         (summary_df["FY 24-25"] > 0) & 
         (summary_df["FY 25-26"] > 0)
     ]["CMP ID"].unique()
     
-    seasoned_data = summary_df[summary_df["CMP ID"].isin(valid_ids)].copy()
+    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(valid_ids)) & (summary_df["Details"] == "Rent")].copy()
     
-    if len(seasoned_data) > 0:
-        target_view = st.radio("Choose Comparison Metric", ["Revenue Grouping", "Rent Cost Grouping"], horizontal=True)
+    if not seasoned_rent.empty:
+        # UPDATED BASED ON YOUR REQUEST: 1 MT requires exactly 6 Sq. Ft. of footprint layout
+        seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
         
-        # Fixed multi-line split bug
-        if "Revenue" in target_view:
-            mapped_detail = "Rev"
-        else:
-            mapped_detail = "Rent"
-        
-        chart_df = seasoned_data[seasoned_data["Details"] == mapped_detail]
-        
-        chart_melt = chart_df.melt(
-            id_vars=["CMP ID", "Capacity"], 
-            value_vars=years, 
-            var_name="Fiscal Year", 
-            value_name="Value"
+        # Calculate Per Square Foot rent for each individual fiscal year line
+        for yr in years:
+            seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
+            
+        # Melt data cleanly to plot the YoY changes side-by-side
+        psf_cols = [f"{yr}_PSF" for yr in years]
+        melt_psf = seasoned_rent.melt(
+            id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
+            value_vars=psf_cols,
+            var_name="Fiscal Year",
+            value_name="Rent PSF"
         )
+        # Simplify names from 'FY 23-24_PSF' to just 'FY 23-24'
+        melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
         
-        fig_yoy = px.bar(
-            chart_melt, 
-            x="CMP ID", 
-            y="Value", 
-            color="Fiscal Year", 
+        # Interactive YoY Plot
+        fig_psf = px.bar(
+            melt_psf,
+            x="CMP ID",
+            y="Rent PSF",
+            color="Fiscal Year",
             barmode="group",
-            title=f"Year-over-Year {mapped_detail} Growth Matrix",
-            color_discrete_sequence=px.colors.qualitative.Set2
+            title="Year-on-Year Rent Cost per Square Foot Comparison (1 MT = 6 Sq. Ft.)",
+            labels={"Rent PSF": "Rent per Sq. Ft. (₹)"},
+            color_discrete_sequence=px.colors.sequential.Teal
         )
-        st.plotly_chart(fig_yoy, use_container_width=True)
+        st.plotly_chart(fig_psf, use_container_width=True)
         
-        st.subheader("📊 Performance Ledger")
-        
-        rename_dict = {
-            "FY 23-24": f"FY 23-24 ({mapped_detail})",
-            "FY 24-25": f"FY 24-25 ({mapped_detail})",
-            "FY 25-26": f"FY 25-26 ({mapped_detail})"
-        }
-        
-        flat_ledger = chart_df.rename(columns=rename_dict).drop(columns=["Details"])
+        # Professional Matrix Grid View
+        st.subheader("📊 Spatial Efficiency Ledger")
+        display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
+        ledger_df = seasoned_rent[display_cols].copy()
         
         st.dataframe(
-            flat_ledger.style.format({
+            ledger_df.style.format({
                 "Capacity": "{:,.0f} MT",
-                f"FY 23-24 ({mapped_detail})": "₹{:,.0f}",
-                f"FY 24-25 ({mapped_detail})": "₹{:,.0f}",
-                f"FY 25-26 ({mapped_detail})": "₹{:,.0f}"
+                "Estimated SqFt": "{:,.0f} Sq. Ft.",
+                "FY 23-24_PSF": "₹{:.2f}/sqft",
+                "FY 24-25_PSF": "₹{:.2f}/sqft",
+                "FY 25-26_PSF": "₹{:.2f}/sqft"
             }),
             use_container_width=True
         )
     else:
-        st.info("No facilities found with active financial entries recorded consistently across all 3 fiscal periods.")
+        st.info("No long-term operational facilities found matching continuous multi-year milestones.")
 
 # =========================================================================
 # TAB 3: INDIVIDUAL WAREHOUSE DRILLDOWN
