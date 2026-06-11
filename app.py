@@ -1,14 +1,12 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 import re
 
-# 1. Page Configuration
-st.set_page_config(page_title="Warehouse Performance Analyzer", layout="wide")
+# 1. Page Config
+st.set_page_config(page_title="Warehouse Analyzer", layout="wide")
 
-# 2. Data Engine
+# 2. Data Loader
 @st.cache_resource
 def load_data():
     df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data")
@@ -19,37 +17,29 @@ def load_data():
 
 df_raw = load_data()
 
-# 3. Sidebar (Global)
+# 3. Sidebar (Always present)
 st.sidebar.title("⚙️ Global Audit Controls")
 selected_fy = st.sidebar.selectbox("Target Fiscal Year", ["FY 23-24", "FY 24-25", "FY 25-26"])
 
-# 4. Main Tabs
-tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Two Years", "🔍 Individual Warehouse Drilldown"])
+# 4. Tabs
+tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Years", "🔍 Individual Drilldown"])
 
-# TAB 0: Portfolio Summary (The Metrics View)
-with tabs[0]:
-    st.subheader(f"Portfolio Financial Overview - {selected_fy}")
-    # We will build the metrics here using df_raw calculations
-    st.write("Metric Rows and Clusters bar chart rendering...")
-
-# TAB 1: YoY Rent Analyzer
-with tabs[1]:
-    st.subheader("YoY Rent Analyzer")
-    st.multiselect("Filter Assets:", options=sorted(df_raw["CMP ID"].unique()))
-    st.write("Clustered bar graph with PSF logic here.")
-
-# TAB 2: Compare Two Years
-with tabs[2]:
-    st.subheader("Compare Two Years")
-    c1, c2 = st.columns(2)
-    c1.selectbox("Baseline Year", ["FY 23-24", "FY 24-25"], key="base")
-    c2.selectbox("Target Year", ["FY 24-25", "FY 25-26"], key="target")
-    st.write("Overlay Rent vs Revenue PSF charts here.")
-
-# TAB 3: Drilldown
+# TAB 3: Drilldown (Testing this first to verify functionality)
 with tabs[3]:
     st.subheader("Individual Warehouse Drilldown")
-    target_wh = st.selectbox("Facility:", options=sorted(df_raw["CMP ID"].unique()))
+    options = sorted(df_raw["CMP ID"].unique().tolist())
+    target_wh = st.selectbox("Select Facility:", options=options)
     
     wh_slice = df_raw[df_raw["CMP ID"] == target_wh]
-    st.write("Chronological sequence graph rendering here.")
+    
+    if not wh_slice.empty:
+        st.write(f"Displaying sequence for: {target_wh}")
+        # Placeholder for your graph logic
+        st.line_chart(wh_slice.filter(like="202")) 
+    else:
+        st.warning("No data found for this asset.")
+
+# 5. Placeholder for other tabs to prevent crashing
+with tabs[0]: st.write("Portfolio Summary Logic Pending.")
+with tabs[1]: st.write("YoY Analyzer Logic Pending.")
+with tabs[2]: st.write("Compare Years Logic Pending.")
