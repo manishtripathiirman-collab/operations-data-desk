@@ -43,21 +43,38 @@ df_filtered_raw = df_raw[
 tab1, tab2, tab3 = st.tabs(["📈 Portfolio Performance Summary", "🔄 YoY Sq. Ft. Rent Analyzer", "🔍 Individual Warehouse Drilldown"])
 
 # =========================================================================
-# TAB 1: PORTFOLIO SUMMARY
+# TAB 1: PORTFOLIO SUMMARY (With Macro Square Footage Analysis)
 # =========================================================================
 with tab1:
-    st.header("📌 Macro Financial Summary")
+    st.header("📌 Macro Financial & Spatial Summary")
     
+    # Core calculations for selected FY
     total_rent = df_filtered_raw[df_filtered_raw["Details"] == "Rent"][selected_fy].sum()
     total_rev = df_filtered_raw[df_filtered_raw["Details"] == "Rev"][selected_fy].sum()
     net_surplus = total_rev - total_rent
     rent_to_rev_ratio = (total_rent / total_rev * 100) if total_rev > 0 else 0
     
+    # Calculate Total Unique Capacity and convert to Square Feet using your 1 MT = 6 SqFt standard
+    total_capacity_mt = df_filtered_raw.drop_duplicates(subset=["CMP ID"])["Capacity"].sum()
+    total_sqft_leased = total_capacity_mt * 6
+    
+    # Spatial unit rate pricing calculations
+    rev_per_sqft = (total_rev / total_sqft_leased) if total_sqft_leased > 0 else 0
+    rent_per_sqft = (total_rent / total_sqft_leased) if total_sqft_leased > 0 else 0
+    
+    # Row 1: Core Financial Totals
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("💰 Total Portfolio Revenue", f"₹{total_rev:,.0f}")
     m2.metric("📉 Total Fixed Rent Costs", f"₹{total_rent:,.0f}")
     m3.metric("🏛️ Net Contribution Surplus", f"₹{net_surplus:,.0f}")
     m4.metric("📊 Rent-to-Revenue Efficiency", f"{rent_to_rev_ratio:.1f}%")
+    
+    # Row 2: NEW Spatial Metrics Added
+    st.markdown("#### 📐 Spatial Unit Rate Performance Metrics")
+    s1, s2, s3 = st.columns(3)
+    s1.metric("🏢 Total Area Leased (Footprint)", f"{total_sqft_leased:,.0f} Sq. Ft.", help="Calculated as Unique Capacity MT * 6")
+    s2.metric("🟢 Macro Revenue / Sq. Ft.", f"₹{rev_per_sqft:.2f}/sqft")
+    s3.metric("🔴 Macro Rent / Sq. Ft.", f"₹{rent_per_sqft:.2f}/sqft")
     
     st.markdown("---")
     chart_col1, chart_col2 = st.columns(2)
@@ -77,7 +94,7 @@ with tab1:
             st.plotly_chart(fig_scatter, use_container_width=True)
 
 # =========================================================================
-# TAB 2: ADJUSTED PER SQUARE FOOT YoY ANALYZER (Capacity * 6)
+# TAB 2: PER SQUARE FOOT YoY ANALYZER (Capacity * 6)
 # =========================================================================
 with tab2:
     st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
@@ -97,14 +114,11 @@ with tab2:
     seasoned_rent = summary_df[(summary_df["CMP ID"].isin(valid_ids)) & (summary_df["Details"] == "Rent")].copy()
     
     if not seasoned_rent.empty:
-        # UPDATED BASED ON YOUR REQUEST: 1 MT requires exactly 6 Sq. Ft. of footprint layout
         seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
         
-        # Calculate Per Square Foot rent for each individual fiscal year line
         for yr in years:
             seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
             
-        # Melt data cleanly to plot the YoY changes side-by-side
         psf_cols = [f"{yr}_PSF" for yr in years]
         melt_psf = seasoned_rent.melt(
             id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
@@ -112,10 +126,8 @@ with tab2:
             var_name="Fiscal Year",
             value_name="Rent PSF"
         )
-        # Simplify names from 'FY 23-24_PSF' to just 'FY 23-24'
         melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
         
-        # Interactive YoY Plot
         fig_psf = px.bar(
             melt_psf,
             x="CMP ID",
@@ -128,7 +140,6 @@ with tab2:
         )
         st.plotly_chart(fig_psf, use_container_width=True)
         
-        # Professional Matrix Grid View
         st.subheader("📊 Spatial Efficiency Ledger")
         display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
         ledger_df = seasoned_rent[display_cols].copy()
