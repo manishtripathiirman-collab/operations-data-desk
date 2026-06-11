@@ -6,85 +6,60 @@ import plotly.graph_objects as go
 import re
 
 # --------------------------------------------------------------------
-# 0. APP CONFIGURATION & CONSTANTS
-# --------------------------------------------------------------------
-st.set_page_config(
-    page_title="Warehouse Performance & Dehire Analyzer",
-    page_icon="🏢",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-MT_TO_SQFT_CONVERSION = 6.0
-FY_COLORS = {
-    "FY 23-24": "#2CA02C", 
-    "FY 24-25": "#FFD700", 
-    "FY 25-26": "#D62728"
-}
-
-def clean_cluster_name(cmp_id):
-    match = re.match(r'^([a-zA-Z\s\-\(\)]+)', str(cmp_id))
-    return match.group(1).strip().upper() if match else "STANDARD-GROUP"
-
-# --------------------------------------------------------------------
-# 1. DATA INGESTION
+# 1. DATA INGESTION & PROCESSING
 # --------------------------------------------------------------------
 @st.cache_resource
-def load_and_clean_warehouse_data(file_path):
-    df_raw = pd.read_excel(file_path, sheet_name="RAW Data")
-    df_raw.columns = [str(col).strip() for col in df_raw.columns]
-    df_raw["CMP ID"] = df_raw["CMP ID"].astype(str).str.strip().str.upper()
-    df_raw["Cluster"] = df_raw["CMP ID"].apply(clean_cluster_name)
-    df_raw["Type_Clean"] = df_raw["Details"].astype(str).str.strip().str.lower()
+def load_data():
+    df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data")
+    df.columns = [str(c).strip() for c in df.columns]
+    df["CMP ID"] = df["CMP ID"].astype(str).str.strip().str.upper()
+    df["Type_Clean"] = df["Details"].astype(str).str.strip().str.lower()
     
-    date_cols = [c for c in df_raw.columns if str(c).startswith(("2023", "2024", "2025", "2026"))]
+    date_cols = [c for c in df.columns if str(c).startswith(("2023", "2024", "2025", "2026"))]
     for col in date_cols:
-        df_raw[col] = pd.to_numeric(df_raw[col], errors='coerce').fillna(0.0)
-        
-    return df_raw, date_cols
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    return df, date_cols
 
-df_raw_original, chronological_months = load_and_clean_warehouse_data("Rent Analysis Data.xlsx")
+df_raw, chronological_months = load_data()
 
 # --------------------------------------------------------------------
 # 2. TABS & LOGIC
 # --------------------------------------------------------------------
-tabs = st.tabs(["📈 Portfolio Performance Summary", "🔄 YoY Sq. Ft. Rent Analyzer", "📊 Compare Two Years", "🔍 Individual Warehouse Drilldown"])
+tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Years", "🔍 Warehouse Drilldown"])
 
-# ... [Tabs 0, 1, and 2 go here] ...
+# TAB 0: PORTFOLIO SUMMARY
+with tabs[0]:
+    st.subheader("Portfolio Financial Overview")
+    st.write("Summary data based on RAW Data columns.")
+    st.dataframe(df_raw.head())
 
+# TAB 1: YoY RENT ANALYZER
+with tabs[1]:
+    st.subheader("Year-on-Year Unit Rent Analyzer")
+    st.write("Rent trends across fiscal years will populate here.")
+
+# TAB 2: COMPARE YEARS
+with tabs[2]:
+    st.subheader("Compare Two Years")
+    c1, c2 = st.columns(2)
+    yr1 = c1.selectbox("Baseline Year", ["FY 23-24", "FY 24-25", "FY 25-26"])
+    yr2 = c2.selectbox("Target Year", ["FY 23-24", "FY 24-25", "FY 25-26"])
+    st.write("Comparative analysis metrics will populate here.")
+
+# TAB 3: WAREHOUSE DRILLDOWN
 with tabs[3]:
-    st.subheader("Granular Individual Property Footprint Lifecycle Review")
-    alphabetical_codes = sorted(df_raw_original["CMP ID"].unique().tolist())
-    target_wh = st.selectbox("Select Facility:", options=alphabetical_codes)
+    st.subheader("Individual Warehouse Drilldown")
+    target_wh = st.selectbox("Select Facility:", options=sorted(df_raw["CMP ID"].unique()))
     
-    wh_raw_slice = df_raw_original[df_raw_original["CMP ID"] == target_wh]
+    wh_slice = df_raw[df_raw["CMP ID"] == target_wh]
+    rev_row = wh_slice[wh_slice["Type_Clean"].str.contains("rev", na=False)]
+    rent_row = wh_slice[wh_slice["Type_Clean"].str.contains("rent", na=False)]
     
-    if wh_raw_slice.empty:
-        st.info("No data found for this asset.")
+    if not rev_row.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=chronological_months, y=rev_row[chronological_months].values.flatten(), name="Revenue"))
+        fig.add_trace(go.Scatter(x=chronological_months, y=rent_row[chronological_months].values.flatten(), name="Rent"))
+        fig.update_layout(height=400, template="plotly_white")
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        rev_row = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("rev|revenue|income", na=False)]
-        rent_row = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("rent|fixed", na=False)]
-        cap_row = wh_raw_slice[wh_raw_slice["Type_Clean"].str.contains("cap|capacity|space", na=False)]
-        
-        rev_vals = [float(rev_row[m].iloc[0]) if not rev_row.empty else 0.0 for m in chronological_months]
-        rent_vals = [float(rent_row[m].iloc[0]) if not rent_row.empty else 0.0 for m in chronological_months]
-        cap_vals = [float(cap_row[m].iloc[0]) if not cap_row.empty else 0.0 for m in chronological_months]
-        
-        # DEFENSIVE CHECK: Only render if we have data to plot
-        if sum(rev_vals) == 0 and sum(rent_vals) == 0 and sum(cap_vals) == 0:
-            st.info("No active records found for this facility.")
-        else:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=chronological_months, y=rev_vals, name='Revenue (₹)'))
-            fig.add_trace(go.Scatter(x=chronological_months, y=rent_vals, name='Rent (₹)'))
-            fig.add_trace(go.Scatter(x=chronological_months, y=cap_vals, name='Capacity (MT)', yaxis='y2'))
-            
-            # SAFE LAYOUT UPDATE
-            fig.update_layout(
-                template="plotly_white",
-                yaxis=dict(title="Financials (₹)"),
-                yaxis2=dict(title="Capacity (MT)", overlaying='y', side='right'),
-                height=400,
-                xaxis_tickangle=-45
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.warning("No data for this facility.")
