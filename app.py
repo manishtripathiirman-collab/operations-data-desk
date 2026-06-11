@@ -8,10 +8,10 @@ import re
 # ---------------------------------------------------------
 # 0. CONFIG & DATA LOAD
 # ---------------------------------------------------------
-st.set_page_config(page_title="Warehouse Performance & Dehire Analyzer", layout="wide")
+st.set_page_config(page_title="Warehouse Performance Analyzer", layout="wide")
 
 @st.cache_resource
-def load_data():
+def load_and_process():
     df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data")
     df.columns = [str(c).strip() for c in df.columns]
     df["CMP ID"] = df["CMP ID"].astype(str).str.strip().str.upper()
@@ -21,52 +21,63 @@ def load_data():
     for col in date_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # Map to FY groups
+    # Fiscal Year Mapping
     fy_map = {
-        "FY 23-24": [c for c in date_cols if "2023" in c or "2024-01" in c or "2024-02" in c or "2024-03" in c],
-        "FY 24-25": [c for c in date_cols if any(m in c for m in ["2024-04", "2024-05", "2024-06", "2024-07", "2024-08", "2024-09", "2024-10", "2024-11", "2024-12", "2025-01", "2025-02", "2025-03"])],
-        "FY 25-26": [c for c in date_cols if any(m in c for m in ["2025-04", "2025-05", "2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03"])]
+        "FY 23-24": [c for c in date_cols if c >= "2023-04-01" and c <= "2024-03-01"],
+        "FY 24-25": [c for c in date_cols if c >= "2024-04-01" and c <= "2025-03-01"],
+        "FY 25-26": [c for c in date_cols if c >= "2025-04-01" and c <= "2026-03-01"]
     }
     return df, date_cols, fy_map
 
-df_raw, chronological_months, fy_map = load_data()
+df_raw, chronological_months, fy_map = load_and_process()
 
-# Sidebar controls
+# Data Builder Function used by all Tabs
+def get_fy_data(fy):
+    cols = fy_map[fy]
+    subset = df_raw.copy()
+    subset['Rev'] = subset[subset["Type_Clean"].str.contains("rev", na=False)][cols].sum(axis=1)
+    subset['Rent'] = subset[subset["Type_Clean"].str.contains("rent", na=False)][cols].sum(axis=1)
+    subset['Cap'] = subset[subset["Type_Clean"].str.contains("cap", na=False)][cols].mean(axis=1)
+    return subset.groupby('CMP ID').agg({'Rev':'sum', 'Rent':'sum', 'Cap':'mean'}).reset_index()
+
+# ---------------------------------------------------------
+# 1. SIDEBAR
+# ---------------------------------------------------------
 st.sidebar.title("⚙️ Global Audit Controls")
-selected_fy = st.sidebar.selectbox("Target Fiscal Year Focus", list(fy_map.keys()))
+selected_fy = st.sidebar.selectbox("Target Fiscal Year", list(fy_map.keys()))
+capacity_range = st.sidebar.slider("Capacity Boundary", 0, 50000, (0, 20000))
 
 # ---------------------------------------------------------
-# 1. TABS SETUP
+# 2. TABS
 # ---------------------------------------------------------
-tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Two Years", "🔍 Warehouse Drilldown"])
+tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Years", "🔍 Warehouse Drilldown"])
 
 # TAB 0: PORTFOLIO SUMMARY
 with tabs[0]:
     st.subheader(f"Portfolio Summary - {selected_fy}")
-    # Placeholder for logic: Summing Rev, Rent, Net Surplus using fy_map[selected_fy]
-    st.write("Financial totals and capacity metrics rendering here...")
+    data = get_fy_data(selected_fy)
+    st.metric("Total Revenue", f"₹{data['Rev'].sum():,.0f}")
+    st.dataframe(data)
 
-# TAB 1: YoY RENT ANALYZER
+# TAB 1: YoY RENT
 with tabs[1]:
-    st.subheader("Year-on-Year Unit Rent Analyzer")
-    st.multiselect("Select Assets:", options=sorted(df_raw["CMP ID"].unique()))
-    # Logic for Active Count >= 2 and clustered bar chart rendering
+    st.subheader("YoY Rent Analyzer")
+    st.write("Analysis logic can be built here using get_fy_data for all years.")
 
-# TAB 2: COMPARE TWO YEARS
+# TAB 2: COMPARE
 with tabs[2]:
-    st.subheader("Compare Two Years")
+    st.subheader("Year-over-Year Comparison")
     c1, c2 = st.columns(2)
-    yr1 = c1.selectbox("Baseline Year", list(fy_map.keys()))
-    yr2 = c2.selectbox("Target Year", list(fy_map.keys()))
-    if yr1 == yr2: st.warning("Please select different years.")
-    # Logic for grouped bar charts
+    y1 = c1.selectbox("Baseline Year", list(fy_map.keys()))
+    y2 = c2.selectbox("Target Year", list(fy_map.keys()))
+    st.write("Comparative analysis logic goes here.")
 
-# TAB 3: WAREHOUSE DRILLDOWN
+# TAB 3: DRILLDOWN
 with tabs[3]:
     st.subheader("Individual Warehouse Drilldown")
     target_wh = st.selectbox("Select Facility:", options=sorted(df_raw["CMP ID"].unique()))
-    
     wh_slice = df_raw[df_raw["CMP ID"] == target_wh]
+    
     rev_row = wh_slice[wh_slice["Type_Clean"].str.contains("rev", na=False)]
     rent_row = wh_slice[wh_slice["Type_Clean"].str.contains("rent", na=False)]
     
