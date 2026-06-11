@@ -34,7 +34,6 @@ def load_and_clean_warehouse_data(file_path):
         df_raw = df_raw_dirty.copy()
         df_raw.columns = [str(col).strip() for col in df_raw.columns]
         
-        # Standardize strings and prevent missing column breaks
         df_raw["CMP ID"] = df_raw["CMP ID"].astype(str).str.strip().str.upper()
         if "Cluster" in df_raw.columns:
             df_raw["Cluster"] = df_raw["Cluster"].astype(str).str.strip()
@@ -46,7 +45,6 @@ def load_and_clean_warehouse_data(file_path):
         else:
             df_raw["Details"] = "Unknown"
             
-        # Standardize matching markers to lowercase
         df_raw["Type_Clean"] = df_raw["Details"].astype(str).str.lower()
         
         # Identify monthly date tracking columns dynamically
@@ -64,16 +62,13 @@ def load_and_clean_warehouse_data(file_path):
         }
         
         # Reshape vertical tracking types into horizontal summary arrays
-        unique_warehouses = df_raw.drop_duplicates(subset=["CMP ID"]).copy()
+        unique_warehouses = df_raw["CMP ID"].unique()
         portfolio_records = []
         
-        for _, f in unique_warehouses.iterrows():
-            cid = f["CMP ID"]
-            cluster = f["Cluster"]
-            
+        for cid in unique_warehouses:
             wh_rows = df_raw[df_raw["CMP ID"] == cid]
+            cluster_val = wh_rows["Cluster"].iloc[0] if "Cluster" in wh_rows.columns else "Standard-Group"
             
-            # Match rows precisely based on text hints found in your Details column
             rev_rows = wh_rows[wh_rows["Type_Clean"].str.contains("rev|revenue|income", na=False)]
             rent_rows = wh_rows[wh_rows["Type_Clean"].str.contains("rent|fixed", na=False)]
             cap_rows = wh_rows[wh_rows["Type_Clean"].str.contains("cap|capacity|space", na=False)]
@@ -82,18 +77,16 @@ def load_and_clean_warehouse_data(file_path):
                 if not columns_in_fy:
                     continue
                     
-                # Aggregate financials via sum
                 rev_val = float(rev_rows[columns_in_fy].sum().sum()) if not rev_rows.empty else 0.0
                 rent_val = float(rent_rows[columns_in_fy].sum().sum()) if not rent_rows.empty else 0.0
-                
-                # Normalize fluid capacity metrics via average to capture dehire impacts fairly
                 cap_val = float(cap_rows[columns_in_fy].mean().mean()) if not cap_rows.empty else 0.0
+                
                 if np.isnan(cap_val):
                     cap_val = 0.0
                     
                 portfolio_records.append({
                     "CMP ID": cid,
-                    "Cluster": cluster,
+                    "Cluster": cluster_val,
                     "Fiscal Year": fy_name,
                     "Rev": rev_val,
                     "Rent": rent_val,
@@ -116,4 +109,45 @@ def load_and_clean_warehouse_data(file_path):
         rent_matches = [c for c in df_rent.columns if any(k in c.upper() for k in ["RENT", "OUTFLOW", "EXPENSE", "COST", "FIXED"])]
         rent_col = rent_matches[0] if rent_matches else (df_rent.columns[2] if len(df_rent.columns) > 2 else df_rent.columns[0])
         
-        df_rent["Warehouse Code Normalized"]
+        df_rent["Warehouse Code Normalized"] = df_rent[wh_code_col].astype(str).str.strip().str.upper()
+        df_rent["Monthly Revenue"] = pd.to_numeric(df_rent[rev_col], errors='coerce').fillna(0.0)
+        df_rent["Monthly Rent"] = pd.to_numeric(df_rent[rent_col], errors='coerce').fillna(0.0)
+        
+        return df_portfolio, df_rent, target_fys
+
+    except Exception as e:
+        st.error(f"🚨 Ingestion Layer Fatal Error: Failed to process raw matrix timeline. Details: {str(e)}")
+        st.stop()
+
+# Repository source layout checkpoint
+target_excel_filename = "Rent Analysis Data.xlsx"
+
+try:
+    df_portfolio, df_rent, available_fys = load_and_clean_warehouse_data(target_excel_filename)
+except FileNotFoundError:
+    st.error(f"📂 Critical File Missing: Please ensure **`{target_excel_filename}`** is uploaded into your GitHub repository folder alongside this app script.")
+    st.stop()
+
+# --------------------------------------------------------------------
+# 2. RUNTIME CONTEXT EXTRACTOR (POST-GROUPING STRATEGY)
+# --------------------------------------------------------------------
+def build_runtime_fy_dataset(fy_target):
+    df_step = df_portfolio[df_portfolio["Fiscal Year"] == fy_target].copy()
+    
+    if df_step.empty:
+        return pd.DataFrame(columns=["CMP ID", "Cluster", "Rev", "Rent", "Cap", "Area_SqFt", "Net_Surplus", "Rev_PSF", "Rent_PSF"])
+        
+    df_step["Area_SqFt"] = df_step["Cap"] * MT_TO_SQFT_CONVERSION
+    df_step["Net_Surplus"] = df_step["Rev"] - df_step["Rent"]
+    
+    df_step["Rev_PSF"] = np.where(df_step["Area_SqFt"] > 0, df_step["Rev"] / df_step["Area_SqFt"], 0.0)
+    df_step["Rent_PSF"] = np.where(df_step["Area_SqFt"] > 0, df_step["Rent"] / df_step["Area_SqFt"], 0.0)
+    return df_step
+
+# --------------------------------------------------------------------
+# 3. GLOBAL CONTROLS & SIDEBAR ENVIRONMENT
+# --------------------------------------------------------------------
+st.sidebar.title("⚙️ Global Audit Controls")
+st.sidebar.markdown("---")
+
+selected_fy = st.
