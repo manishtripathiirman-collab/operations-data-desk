@@ -15,7 +15,7 @@ st.markdown("---")
 def load_excel_data():
     raw_df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data", engine="openpyxl")
     
-    # Force all IDs to UPPERCASE and strip spaces to ensure matching across rows
+    # Standardize casing and strip spaces immediately upon ingestion
     raw_df["CMP ID"] = raw_df["CMP ID"].astype(str).str.strip().str.upper()
     raw_df["Details"] = raw_df["Details"].astype(str).str.strip()
     
@@ -110,4 +110,173 @@ with tab1:
 # TAB 2: PER SQUARE FOOT YoY ANALYZER
 # =========================================================================
 with tab2:
-    st.header("
+    st.header("📐 Per Square Foot (PSF) Lease Cost Tracking")
+    st.markdown("Isolating warehouses with continuous records to monitor YoY real estate spatial efficiency.")
+    
+    years = ["FY 23-24", "FY 24-25", "FY 25-26"]
+    
+    for yr in years:
+        df_raw[yr] = pd.to_numeric(df_raw[yr], errors='coerce').fillna(0)
+        
+    summary_df = df_raw.groupby(["CMP ID", "Capacity", "Details"])[years].sum().reset_index()
+    
+    valid_ids = summary_df[
+        (summary_df["Details"] == "Rev") & 
+        (summary_df["FY 23-24"] > 0) & 
+        (summary_df["FY 24-25"] > 0) & 
+        (summary_df["FY 25-26"] > 0)
+    ]["CMP ID"].unique()
+    
+    seasoned_rent = summary_df[(summary_df["CMP ID"].isin(valid_ids)) & (summary_df["Details"] == "Rent")].copy()
+    
+    if not seasoned_rent.empty:
+        seasoned_rent["Estimated SqFt"] = seasoned_rent["Capacity"] * 6
+        
+        for yr in years:
+            seasoned_rent[f"{yr}_PSF"] = seasoned_rent[yr] / seasoned_rent["Estimated SqFt"]
+            
+        psf_cols = [f"{yr}_PSF" for yr in years]
+        melt_psf = seasoned_rent.melt(
+            id_vars=["CMP ID", "Capacity", "Estimated SqFt"],
+            value_vars=psf_cols,
+            var_name="Fiscal Year",
+            value_name="Rent PSF"
+        )
+        melt_psf["Fiscal Year"] = melt_psf["Fiscal Year"].apply(lambda x: x.split('_')[0])
+        
+        fig_psf = px.bar(
+            melt_psf,
+            x="CMP ID",
+            y="Rent PSF",
+            color="Fiscal Year",
+            barmode="group",
+            title="Year-on-Year Rent Cost per Square Foot Comparison (1 MT = 6 Sq. Ft.)",
+            labels={"Rent PSF": "Rent per Sq. Ft. (₹)"},
+            color_discrete_sequence=px.colors.sequential.Teal
+        )
+        st.plotly_chart(fig_psf, use_container_width=True)
+        
+        st.subheader("📊 Spatial Efficiency Ledger")
+        display_cols = ["CMP ID", "Capacity", "Estimated SqFt", "FY 23-24_PSF", "FY 24-25_PSF", "FY 25-26_PSF"]
+        ledger_df = seasoned_rent[display_cols].copy()
+        
+        st.dataframe(
+            ledger_df.style.format({
+                "Capacity": "{:,.0f} MT",
+                "Estimated SqFt": "{:,.0f} Sq. Ft.",
+                "FY 23-24_PSF": "₹{:.2f}/sqft",
+                "FY 24-25_PSF": "₹{:.2f}/sqft",
+                "FY 25-26_PSF": "₹{:.2f}/sqft"
+            }),
+            use_container_width=True
+        )
+    else:
+        st.info("No long-term operational facilities found matching continuous multi-year milestones yet.")
+
+# =========================================================================
+# TAB 3: DUAL-YEAR PERFORMANCE ANALYZER
+# =========================================================================
+with tab3:
+    st.header("📊 Comparative Dual-Period Unit Assessment")
+    st.markdown("Isolate and evaluate pricing efficiency dynamics across any two chosen operational horizons.")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        base_year = st.selectbox("Select Baseline Year", ["FY 23-24", "FY 24-25", "FY 25-26"], index=0)
+    with c2:
+        comp_year = st.selectbox("Select Comparison Year", ["FY 23-24", "FY 24-25", "FY 25-26"], index=2)
+        
+    if base_year == comp_year:
+        st.warning("Please choose two different fiscal periods to cross-examine comparative parameters.")
+    else:
+        target_years = [base_year, comp_year]
+        paired_summary = df_raw.groupby(["CMP ID", "Capacity", "Details"])[target_years].sum().reset_index()
+        
+        active_mask = (paired_summary["Details"] == "Rev") & (paired_summary[base_year] > 0) & (paired_summary[comp_year] > 0)
+        paired_valid_ids = paired_summary[active_mask]["CMP ID"].unique()
+        
+        paired_seasoned = paired_summary[paired_summary["CMP ID"].isin(paired_valid_ids)].copy()
+        
+        if not paired_seasoned.empty:
+            paired_seasoned["SqFt"] = paired_seasoned["Capacity"] * 6
+            comp_pivot = paired_seasoned.pivot_table(index=["CMP ID", "SqFt"], columns="Details", values=[base_year, comp_year]).reset_index()
+            
+            comp_pivot[f"{base_year}_Rev_PSF"] = comp_pivot[(base_year, "Rev")] / comp_pivot["SqFt"]
+            comp_pivot[f"{base_year}_Rent_PSF"] = comp_pivot[(base_year, "Rent")] / comp_pivot["SqFt"]
+            comp_pivot[f"{comp_year}_Rev_PSF"] = comp_pivot[(comp_year, "Rev")] / comp_pivot["SqFt"]
+            comp_pivot[f"{comp_year}_Rent_PSF"] = comp_pivot[(comp_year, "Rent")] / comp_pivot["SqFt"]
+            
+            st.subheader(f"📈 Unit Rate Spread Profile ({base_year} vs {comp_year})")
+            fig_compare = go.Figure()
+            
+            fig_compare.add_trace(go.Bar(
+                x=comp_pivot["CMP ID"], y=comp_pivot[f"{base_year}_Rev_PSF"],
+                name=f"{base_year} Rev/SqFt", marker_color="#00CC96", offsetgroup=1
+            ))
+            fig_compare.add_trace(go.Bar(
+                x=comp_pivot["CMP ID"], y=comp_pivot[f"{base_year}_Rent_PSF"],
+                name=f"{base_year} Rent/SqFt", marker_color="#EF553B", offsetgroup=1,
+                base=0, width=0.2
+            ))
+            fig_compare.add_trace(go.Bar(
+                x=comp_pivot["CMP ID"], y=comp_pivot[f"{comp_year}_Rev_PSF"],
+                name=f"{comp_year} Rev/SqFt", marker_color="#0068C9", offsetgroup=2
+            ))
+            fig_compare.add_trace(go.Bar(
+                x=comp_pivot["CMP ID"], y=comp_pivot[f"{comp_year}_Rent_PSF"],
+                name=f"{comp_year} Rent/SqFt", marker_color="#FF4B4B", offsetgroup=2,
+                base=0, width=0.2
+            ))
+            
+            fig_compare.update_layout(
+                barmode="group",
+                xaxis_title="Warehouse Facility Code (CMP ID)",
+                yaxis_title="Unit Price Metric Value (₹/Sq. Ft.)",
+                legend_orientation="h"
+            )
+            st.plotly_chart(fig_compare, use_container_width=True)
+            
+            st.subheader("📋 Comparative Unit Pricing Matrix")
+            ledger_display = pd.DataFrame({
+                "CMP ID": comp_pivot["CMP ID"],
+                "Total Area": comp_pivot["SqFt"],
+                f"{base_year} Rev/PSF": comp_pivot[f"{base_year}_Rev_PSF"],
+                f"{base_year} Rent/PSF": comp_pivot[f"{base_year}_Rent_PSF"],
+                f"{comp_year} Rev/PSF": comp_pivot[f"{comp_year}_Rev_PSF"],
+                f"{comp_year} Rent/PSF": comp_pivot[f"{comp_year}_Rent_PSF"]
+            })
+            
+            st.dataframe(
+                ledger_display.style.format({
+                    "Total Area": "{:,.0f} Sq. Ft.",
+                    f"{base_year} Rev/PSF": "₹{:.2f}/sf",
+                    f"{base_year} Rent/PSF": "₹{:.2f}/sf",
+                    f"{comp_year} Rev/PSF": "₹{:.2f}/sf",
+                    f"{comp_year} Rent/PSF": "₹{:.2f}/sf"
+                }),
+                use_container_width=True
+            )
+        else:
+            st.info("No long-term active locations recorded across both filtered target timelines.")
+
+# =========================================================================
+# TAB 4: INDIVIDUAL WAREHOUSE DRILLDOWN
+# =========================================================================
+with tab4:
+    st.header("🔍 Granular Asset Investigation Desk")
+    
+    selected_facility = st.selectbox("Select Target Facility to Inspect", df_raw["CMP ID"].unique())
+    facility_profile = df_raw[df_raw["CMP ID"] == selected_facility]
+    
+    month_cols = [col for col in df_raw.columns if any(year in str(col) for year in ["2023", "2024", "2025", "2026"])]
+    
+    if not facility_profile.empty and len(month_cols) > 0:
+        cap_val = facility_profile["Capacity"].values[0]
+        st.metric("Storage Volume Capacity (MT)", f"{cap_val:,} MT")
+        
+        timeline_df = facility_profile.melt(id_vars=["Details"], value_vars=month_cols, var_name="Month", value_name="Amount")
+        timeline_df["Month"] = pd.to_datetime(timeline_df["Month"])
+        timeline_df = timeline_df.sort_values("Month")
+        
+        fig_time = px.line(timeline_df, x="Month", y="Amount", color="Details", markers=True, color_discrete_map={"Rent": "#EF553B", "Rev": "#00CC96"})
+        st.plotly_chart(fig_time, use_container_width=True)
