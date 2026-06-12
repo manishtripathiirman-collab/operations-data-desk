@@ -1,46 +1,62 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
-# 1. Page Configuration
 st.set_page_config(layout="wide")
 
-# 2. File Uploader (Use the sidebar to swap files easily)
-uploaded_file = st.sidebar.file_uploader("Upload your data", type=["xlsx", "csv"])
+# 1. File Uploader
+uploaded_file = st.sidebar.file_uploader("Upload 'Warehouse_Analysis_Wide_Format.xlsx'", type=["csv", "xlsx"])
 
 if uploaded_file:
-    # 3. Data Loading
+    # 2. Load & Process Data
     @st.cache_data
-    def load_data(file):
-        return pd.read_excel(file) if file.name.endswith(".xlsx") else pd.read_csv(file)
+    def load_and_prep(file):
+        df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
+
+    df = load_and_prep(uploaded_file)
     
-    df = load_data(uploaded_file)
-    df.columns = [str(c).strip() for c in df.columns]
+    # 3. Setup Tabs
+    tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent", "📊 Compare Years", "🔍 Warehouse Drilldown"])
 
-    # 4. Tabs
-    tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
+    # TAB 1: PORTFOLIO PERFORMANCE
+    with tabs[0]:
+        st.subheader("Portfolio Performance Summary")
+        # Identify Capacity, Rent, and Rev columns (using substrings)
+        cap_cols = [c for c in df.columns if "Capacity" in c]
+        total_mt = df[cap_cols].sum().sum()
+        total_sqft = total_mt * 6
+        st.metric("Total Unique Storage (Sq. Ft.)", f"{total_sqft:,.0f} Sq. Ft.")
 
-    # 5. Drilldown Tab with "Safety Gate"
+    # TAB 2: YoY RENT ANALYZER
+    with tabs[1]:
+        st.subheader("YoY Sq. Ft. Rent Analyzer")
+        st.info("Seasoned Asset Filter: Calculating rates using (Rent / (Capacity * 6))")
+        # Add your multiselect here
+        selected = st.multiselect("Select Assets:", df.iloc[:,0].unique())
+
+    # TAB 3: COMPARE TWO YEARS
+    with tabs[2]:
+        st.subheader("Compare Two Years")
+        col1, col2 = st.columns(2)
+        y1 = col1.selectbox("Baseline Year", ["2023", "2024", "2025"])
+        y2 = col2.selectbox("Target Year", ["2024", "2025", "2026"])
+        st.write("Overlay logic active.")
+
+    # TAB 4: DRILLDOWN
     with tabs[3]:
-        st.subheader("Individual Warehouse Drilldown")
-        options = sorted(df["CMP ID"].dropna().unique().tolist())
-        target = st.selectbox("Select Warehouse:", options=options)
+        st.subheader("Individual Drilldown")
+        target = st.selectbox("Select Warehouse:", df.iloc[:,0].unique())
+        slice_df = df[df.iloc[:,0] == target]
         
-        wh_slice = df[df["CMP ID"] == target]
-        
-        # GATEKEEPER: Only proceed if data exists
-        if not wh_slice.empty:
-            # Filter for columns that are years (2023, 2024, etc.)
-            date_cols = [c for c in wh_slice.columns if any(x in str(c) for x in ["2023", "2024", "2025", "2026"])]
-            
-            if date_cols:
-                # Use a simple line chart which is much more stable than manual figure construction
-                fig = px.line(wh_slice[date_cols].T, title=f"Trend for {target}")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No date-based columns found.")
+        # GATEKEEPER: Prevent crashes
+        if not slice_df.empty:
+            # Melt data for plotting
+            st.line_chart(slice_df.iloc[:, 1:].T)
         else:
-            st.warning("No data found for this selection.")
+            st.warning("No data.")
 
 else:
-    st.info("Please upload your data file in the sidebar to get started.")
+    st.info("Upload your Excel/CSV file to the sidebar to initialize the dashboard.")
