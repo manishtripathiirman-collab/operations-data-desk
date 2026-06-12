@@ -1,66 +1,52 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
 
-# 1. Sidebar File Uploader (Always use this to swap files easily)
-uploaded_file = st.sidebar.file_uploader("Upload Warehouse Data", type=["xlsx", "csv"])
+# 1. Load Data
+uploaded_file = st.sidebar.file_uploader("Upload Data", type=["xlsx", "csv"])
+if not uploaded_file:
+    st.info("Upload file in sidebar.")
+    st.stop()
 
-if uploaded_file:
-    # 2. Data Loading Engine
-    @st.cache_data
-    def load_data(file):
-        df = pd.read_excel(file) if file.name.endswith(".xlsx") else pd.read_csv(file)
-        # Strip spaces from column names to prevent matching errors
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
+df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith(".xlsx") else pd.read_csv(uploaded_file)
+df.columns = [str(c).strip() for c in df.columns]
 
-    df = load_data(uploaded_file)
+# 2. Year-on-Year Engine
+# We group the columns by their year/FY keyword
+def get_fy_data(df):
+    fy_groups = {
+        "FY 23-24": [c for c in df.columns if "2023" in str(c) or "2024-01" in str(c)],
+        "FY 24-25": [c for c in df.columns if "2024" in str(c) and "2024-01" not in str(c)],
+        "FY 25-26": [c for c in df.columns if "2025" in str(c) or "2026" in str(c)]
+    }
     
-    # DYNAMIC IDENTIFICATION: Pick the first column as your Warehouse/ID column
-    id_col = df.columns[0]
-    
-    # 3. Tabs
-    tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
+    # We build a new summary DF for YoY comparison
+    summary = pd.DataFrame()
+    for fy, cols in fy_groups.items():
+        # You need to adjust these strings based on your actual column names
+        rev_cols = [c for c in cols if "Rev" in c]
+        rent_cols = [c for c in cols if "Rent" in c]
+        cap_cols = [c for c in cols if "Capacity" in c]
+        
+        # Calculations: Annualized totals
+        summary[f"{fy} Rev"] = df[rev_cols].sum(axis=1)
+        summary[f"{fy} Rent"] = df[rent_cols].sum(axis=1)
+        # PSF Math: (Total Rent / (Average Capacity * 6))
+        avg_cap = df[cap_cols].mean(axis=1)
+        summary[f"{fy} Rent PSF"] = summary[f"{fy} Rent"] / (avg_cap * 6)
+        summary[f"{fy} Rev PSF"] = summary[f"{fy} Rev"] / (avg_cap * 6)
+    return summary
 
-    # --- DRILLDOWN TAB ---
-    with tabs[3]:
-        st.subheader("Individual Warehouse Drilldown")
-        
-        # Safe options list
-        options = sorted(df[id_col].dropna().unique().tolist())
-        target = st.selectbox("Select Warehouse:", options=options)
-        
-        # FILTER
-        wh_slice = df[df[id_col] == target]
-        
-        # GATEKEEPER: Only proceed if slice is not empty
-        if not wh_slice.empty:
-            # Detect date-based columns safely
-            date_cols = [c for c in wh_slice.columns if any(x in str(c) for x in ["2023", "2024", "2025", "2026"])]
-            
-            if date_cols:
-                # Transpose for plotting
-                chart_data = wh_slice[date_cols].T
-                chart_data.columns = [target]
-                st.line_chart(chart_data)
-            else:
-                st.info("No date-based columns found.")
-        else:
-            st.warning("No data found for this selection.")
+# 3. YoY Rent vs Revenue Comparison (Tab 2)
+# Here is how you render the YoY PSF comparison:
+st.subheader("YoY Rent vs Revenue Per Sq. Ft.")
+summary_df = get_fy_data(df)
 
-    # --- TAB 0: PORTFOLIO SUMMARY (The logic you requested) ---
-    with tabs[0]:
-        st.subheader("Portfolio Financial Overview")
-        # Logic: Multiply Capacity by 6 to get Sq Ft
-        # Note: We find columns containing 'Capacity'
-        cap_cols = [c for c in df.columns if "Capacity" in c]
-        total_mt = df[cap_cols].sum().sum()
-        total_sqft = total_mt * 6
-        
-        st.metric("Total Storage Capacity (Sq. Ft.)", f"{total_sqft:,.0f} Sq. Ft.")
-        st.write("Math logic applied: Total MT * 6")
-
-else:
-    st.info("Please upload your Excel/CSV file in the sidebar to begin.")
+# Example: Plotting Rent PSF YoY
+fig = go.Figure()
+fig.add_trace(go.Bar(name='FY 23-24 Rent PSF', x=df.iloc[:,0], y=summary_df['FY 23-24 Rent PSF']))
+fig.add_trace(go.Bar(name='FY 24-25 Rent PSF', x=df.iloc[:,0], y=summary_df['FY 24-25 Rent PSF']))
+fig.update_layout(barmode='group')
+st.plotly_chart(fig, use_container_width=True)
