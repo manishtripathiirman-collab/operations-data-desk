@@ -1,74 +1,56 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
 
 # 1. LOAD DATA
-uploaded_file = st.sidebar.file_uploader("Upload Warehouse Data", type=["csv", "xlsx"])
+uploaded_file = st.sidebar.file_uploader("Upload your CSV", type=["csv", "xlsx"])
 if not uploaded_file:
-    st.info("Upload your CSV/Excel file in the sidebar to begin.")
+    st.info("Upload your file to begin.")
     st.stop()
 
 @st.cache_data
-def load_and_clean(file):
+def load_and_prep(file):
     df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
-df = load_and_clean(uploaded_file)
+df = load_and_prep(uploaded_file)
+warehouse_col = df.columns[0]
 
-# 2. DATA PREP ENGINE
-# Your data columns repeat: [Date] Capacity, [Date] Rent, [Date] Rev
-def get_category_cols(category_keyword):
-    return [c for c in df.columns if category_keyword in c]
+# 2. DYNAMIC CATEGORY FINDER
+def get_cols(keyword):
+    # Returns columns that contain the keyword (e.g., 'Rev', 'Rent', 'Capacity')
+    return [c for c in df.columns if keyword.lower() in c.lower()]
 
 # 3. TABS
-tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Two-Year Comparison", "🔍 Warehouse Drilldown"])
+tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
 
-# TAB 1: PORTFOLIO PERFORMANCE
 with tabs[0]:
     st.subheader("Portfolio Performance Summary")
-    # Spatial Logic: Capacity * 6 = SqFt
-    total_mt = df[get_category_cols("Capacity")].sum().sum()
-    total_sqft = total_mt * 6
-    total_rev = df[get_category_cols("Rev")].sum().sum()
-    total_rent = df[get_category_cols("Rent")].sum().sum()
+    # Use keywords to sum everything
+    rev_cols = get_cols("Rev")
+    rent_cols = get_cols("Rent")
+    cap_cols = get_cols("Capacity")
     
+    total_rev = df[rev_cols].sum().sum()
+    total_rent = df[rent_cols].sum().sum()
+    total_mt = df[cap_cols].sum().sum()
+    
+    # Metrics
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Revenue", f"₹{total_rev:,.0f}")
-    c2.metric("Rent", f"₹{total_rent:,.0f}")
+    c1.metric("Total Revenue", f"₹{total_rev:,.0f}")
+    c2.metric("Total Rent", f"₹{total_rent:,.0f}")
     c3.metric("Net Surplus", f"₹{total_rev - total_rent:,.0f}")
-    c4.metric("Total Area", f"{total_sqft:,.0f} Sq. Ft.")
+    c4.metric("Total Area", f"{total_mt * 6:,.0f} Sq. Ft.")
 
-# TAB 2: YoY RENT ANALYZER
-with tabs[2]: # Using index 2 for the Comparison Tool as requested
-    st.subheader("Two-Year Comparison Tool")
-    c1, c2 = st.columns(2)
-    yr1 = c1.selectbox("Baseline Year", ["2023", "2024", "2025"])
-    yr2 = c2.selectbox("Target Year", ["2024", "2025", "2026"])
-    
-    if yr1 == yr2:
-        st.warning("Please select different years for comparison.")
-    else:
-        # Filter columns for specific years
-        y1_rev = df[get_category_cols(yr1 + "-")].filter(like="Rev").sum(axis=1)
-        y2_rev = df[get_category_cols(yr2 + "-")].filter(like="Rev").sum(axis=1)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=df.iloc[:,0], y=y1_rev, name=yr1))
-        fig.add_trace(go.Bar(x=df.iloc[:,0], y=y2_rev, name=yr2))
-        fig.update_layout(barmode='group')
-        st.plotly_chart(fig, use_container_width=True)
-
-# TAB 4: DRILLDOWN
 with tabs[3]:
-    st.subheader("Individual Warehouse Drilldown")
-    target = st.selectbox("Select Warehouse:", df.iloc[:,0].unique())
-    slice_df = df[df.iloc[:,0] == target]
+    st.subheader("Individual Drilldown")
+    target = st.selectbox("Select Warehouse:", options=df[warehouse_col].unique())
+    slice_df = df[df[warehouse_col] == target].copy()
     
-    if not slice_df.empty:
-        # Plot Revenue vs Rent over time
-        st.line_chart(slice_df.filter(like="Rev").T)
-        st.line_chart(slice_df.filter(like="Rent").T)
+    # Melt the data so we can chart it
+    melted = slice_df.melt(id_vars=[warehouse_col])
+    # Simple line chart
+    st.line_chart(melted, x="variable", y="value")
