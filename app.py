@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
+import plotly.express as px
 
 st.set_page_config(layout="wide")
 
@@ -11,34 +11,34 @@ if not uploaded_file:
     st.stop()
 
 @st.cache_data
-def load_and_fix(file):
-    # Read the file
-    df = pd.read_csv(file)
+def load_fixed_data(file):
+    # Get the raw headers to know how many months there are
+    raw_header = pd.read_csv(file, nrows=0)
     
-    # RENAME: Force unique names for the repeating triplets
-    # We take the first column as CMP ID, then assume triplets for the rest
-    new_cols = [df.columns[0]]
+    # Create unique names: ID, Apr-2023_Cap, Apr-2023_Rent, Apr-2023_Rev, ...
+    new_cols = [raw_header.columns[0]]
     triplets = ["_Cap", "_Rent", "_Rev"]
     
-    # Build a new list of column names
-    for i in range(1, len(df.columns), 3):
-        date = df.columns[i]
+    # Skip the first column (ID) and iterate in steps of 3
+    for i in range(1, len(raw_header.columns), 3):
+        date = raw_header.columns[i]
         for t in triplets:
             new_cols.append(f"{date}{t}")
             
-    df.columns = new_cols
+    # Load data using these unique names
+    df = pd.read_csv(file, names=new_cols, header=1)
     return df
 
-df = load_and_fix(uploaded_file)
+df = load_fixed_data(uploaded_file)
 id_col = df.columns[0]
 
 # 2. TABS
 tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
 
-# TAB 1: PORTFOLIO SUMMARY
+# TAB 1: PORTFOLIO
 with tabs[0]:
-    st.subheader("Portfolio Performance Summary")
-    # Spatial Calculation: MT * 6 = Sq Ft
+    st.subheader("Portfolio Performance")
+    # Spatial: Cap * 6
     total_mt = df.filter(like="_Cap").sum().sum()
     total_rev = df.filter(like="_Rev").sum().sum()
     total_rent = df.filter(like="_Rent").sum().sum()
@@ -51,11 +51,12 @@ with tabs[0]:
 
 # TAB 4: DRILLDOWN
 with tabs[3]:
-    st.subheader("Individual Drilldown")
-    target = st.selectbox("Select Warehouse:", options=df[id_col].unique())
+    target = st.selectbox("Warehouse:", options=df[id_col].unique())
     slice_df = df[df[id_col] == target]
     
     if not slice_df.empty:
-        # Plotting specific columns
+        # Plotting the unique columns we created
+        st.write("Revenue Trend")
         st.line_chart(slice_df.filter(like="_Rev").T)
+        st.write("Rent Trend")
         st.line_chart(slice_df.filter(like="_Rent").T)
