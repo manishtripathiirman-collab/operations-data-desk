@@ -2,47 +2,54 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_page_config(layout="wide", page_title="Warehouse Dashboard")
+# Dashboard Configuration
+st.set_page_config(layout="wide", page_title="Warehouse Analytics")
 
 # 1. LOAD DATA
 @st.cache_data
 def load_data():
-    # Load the cleaned CSV directly
+    # Reads the file from your GitHub repository
     df = pd.read_csv('Warehouse_Analysis_Cleaned.csv')
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     return df
 
-df = load_data()
+# Initialize Data
+try:
+    df = load_data()
+except Exception as e:
+    st.error(f"Could not load data file. Please ensure 'Warehouse_Analysis_Cleaned.csv' is in your GitHub repo. Error: {e}")
+    st.stop()
 
-# 2. APP LAYOUT
-st.title("📦 Warehouse Performance Dashboard")
+# 2. SIDEBAR NAVIGATION
+st.sidebar.title("Warehouse Controls")
+selected_warehouse = st.sidebar.selectbox("Select Warehouse", df['Warehouse'].unique())
 
-# 3. TABS
-tabs = st.tabs(["📈 Portfolio Overview", "🔍 Site Drilldown"])
+# 3. MAIN DASHBOARD CONTENT
+st.title(f"📊 Dashboard: {selected_warehouse}")
 
-# TAB 1: PORTFOLIO
-with tabs[0]:
-    st.subheader("Portfolio Summary")
-    # Grouping by metric to show high-level totals
-    pivot = df.groupby('Metric')['Value'].sum()
-    
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Revenue", f"₹{pivot.get('Rev', 0):,.0f}")
-    c2.metric("Total Rent", f"₹{pivot.get('Rent', 0):,.0f}")
-    c3.metric("Total Capacity", f"{pivot.get('Cap', 0):,.0f} MT")
+# KPIs (Using the latest data point for the selected warehouse)
+site_data = df[df['Warehouse'] == selected_warehouse]
+latest_rev = site_data[site_data['Metric'] == 'Rev'].iloc[-1]['Value'] if not site_data[site_data['Metric'] == 'Rev'].empty else 0
+latest_rent = site_data[site_data['Metric'] == 'Rent'].iloc[-1]['Value'] if not site_data[site_data['Metric'] == 'Rent'].empty else 0
+latest_cap = site_data[site_data['Metric'] == 'Cap'].iloc[-1]['Value'] if not site_data[site_data['Metric'] == 'Cap'].empty else 0
 
-# TAB 2: DRILLDOWN
-with tabs[1]:
-    st.subheader("Site-Specific Trends")
-    target = st.selectbox("Choose a Site:", df['Warehouse'].unique())
-    site_df = df[df['Warehouse'] == target]
-    
-    # Create charts for each metric
-    for m in ['Rev', 'Rent', 'Cap']:
-        fig = px.line(
-            site_df[site_df['Metric'] == m], 
-            x='Date', y='Value', 
-            title=f"{m} Trend for {target}", 
-            markers=True
-        )
-        st.plotly_chart(fig, use_container_width=True)
+c1, c2, c3 = st.columns(3)
+c1.metric("Current Revenue", f"₹{latest_rev:,.0f}")
+c2.metric("Current Rent", f"₹{latest_rent:,.0f}")
+c3.metric("Current Capacity", f"{latest_cap:,.0f} MT")
+
+# CHARTING
+st.subheader("Performance Trends")
+fig = px.line(
+    site_data, 
+    x='Date', 
+    y='Value', 
+    color='Metric', 
+    markers=True,
+    template="plotly_white"
+)
+st.plotly_chart(fig, use_container_width=True)
+
+# RAW DATA VIEW
+if st.checkbox("Show Raw Data"):
+    st.dataframe(site_data)
