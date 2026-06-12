@@ -4,28 +4,30 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-# 1. LOAD DATA
-uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
+# 1. FILE LOADER
+uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
 if not uploaded_file:
-    st.info("Upload your CSV file.")
+    st.info("Upload your Excel file in the sidebar to begin.")
     st.stop()
 
 @st.cache_data
-def load_data(file):
-    # Read raw headers to create unique triplet names
-    raw_header = pd.read_csv(file, nrows=0)
-    new_cols = [raw_header.columns[0]]
+def load_and_fix(file):
+    # Load headers separately to rename them
+    header_df = pd.read_excel(file, nrows=0)
     
-    # Create unique names: Date_Cap, Date_Rent, Date_Rev
-    for i in range((len(raw_header.columns) - 1) // 3):
-        date = raw_header.columns[1 + (i*3)]
-        new_cols.extend([f"{date}_Cap", f"{date}_Rent", f"{date}_Rev"])
-    
-    df = pd.read_csv(file, names=new_cols, header=1)
+    # Generate Unique Names: Date_Cap, Date_Rent, Date_Rev
+    new_cols = [header_df.columns[0]]
+    triplets = ["_Cap", "_Rent", "_Rev"]
+    for i in range(1, len(header_df.columns), 3):
+        date = str(header_df.columns[i])
+        for t in triplets:
+            new_cols.append(f"{date}{t}")
+            
+    df = pd.read_excel(file, header=1, names=new_cols)
     return df
 
-df = load_data(uploaded_file)
-wh_col = df.columns[0]
+df = load_and_fix(uploaded_file)
+warehouse_id = df.columns[0]
 
 # 2. TABS
 tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
@@ -33,7 +35,7 @@ tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldo
 # TAB 1: PORTFOLIO SUMMARY
 with tabs[0]:
     st.subheader("Portfolio Performance Summary")
-    # Capacity * 6 = Sq Ft
+    # Spatial Metric: Sum all Capacity columns and multiply by 6
     total_mt = df.filter(like="_Cap").sum().sum()
     total_rev = df.filter(like="_Rev").sum().sum()
     total_rent = df.filter(like="_Rent").sum().sum()
@@ -42,15 +44,18 @@ with tabs[0]:
     c1.metric("Total Revenue", f"₹{total_rev:,.0f}")
     c2.metric("Total Rent", f"₹{total_rent:,.0f}")
     c3.metric("Net Surplus", f"₹{total_rev - total_rent:,.0f}")
-    c4.metric("Total Area", f"{total_mt * 6:,.0f} Sq. Ft.")
+    c4.metric("Total Sq. Ft.", f"{total_mt * 6:,.0f} Sq. Ft.")
 
 # TAB 4: DRILLDOWN
 with tabs[3]:
-    st.subheader("Individual Warehouse Drilldown")
-    target = st.selectbox("Select Warehouse:", options=df[wh_col].unique())
-    slice_df = df[df[wh_col] == target]
+    st.subheader("Individual Drilldown")
+    target = st.selectbox("Select Warehouse:", options=df[warehouse_id].unique())
+    slice_df = df[df[warehouse_id] == target]
     
     if not slice_df.empty:
-        # Show trends
-        st.line_chart(slice_df.filter(like="_Rev").T, width=0, height=300)
-        st.line_chart(slice_df.filter(like="_Rent").T, width=0, height=300)
+        # Plotting the time series for this warehouse
+        rev_data = slice_df.filter(like="_Rev").T
+        rent_data = slice_df.filter(like="_Rent").T
+        
+        st.line_chart(rev_data)
+        st.line_chart(rent_data)
