@@ -4,58 +4,60 @@ import plotly.express as px
 
 st.set_page_config(layout="wide")
 
-# 1. FILE LOADER
-uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
-if not uploaded_file:
-    st.info("Upload your Excel file in the sidebar to begin.")
-    st.stop()
+# 1. FILE UPLOADER
+uploaded_file = st.sidebar.file_uploader("Upload 'Warehouse_Analysis_Wide_Format.xlsx'", type=["xlsx", "csv"])
 
-@st.cache_data
-def load_and_fix(file):
-    # Load headers separately to rename them
-    header_df = pd.read_excel(file, nrows=0)
-    
-    # Generate Unique Names: Date_Cap, Date_Rent, Date_Rev
-    new_cols = [header_df.columns[0]]
-    triplets = ["_Cap", "_Rent", "_Rev"]
-    for i in range(1, len(header_df.columns), 3):
-        date = str(header_df.columns[i])
-        for t in triplets:
-            new_cols.append(f"{date}{t}")
-            
-    df = pd.read_excel(file, header=1, names=new_cols)
-    return df
-
-df = load_and_fix(uploaded_file)
-warehouse_id = df.columns[0]
-
-# 2. TABS
-tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
-
-# TAB 1: PORTFOLIO SUMMARY
-with tabs[0]:
-    st.subheader("Portfolio Performance Summary")
-    # Spatial Metric: Sum all Capacity columns and multiply by 6
-    total_mt = df.filter(like="_Cap").sum().sum()
-    total_rev = df.filter(like="_Rev").sum().sum()
-    total_rent = df.filter(like="_Rent").sum().sum()
-    
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Revenue", f"₹{total_rev:,.0f}")
-    c2.metric("Total Rent", f"₹{total_rent:,.0f}")
-    c3.metric("Net Surplus", f"₹{total_rev - total_rent:,.0f}")
-    c4.metric("Total Sq. Ft.", f"{total_mt * 6:,.0f} Sq. Ft.")
-
-# TAB 4: DRILLDOWN
-with tabs[3]:
-    st.subheader("Individual Drilldown")
-    target = st.selectbox("Select Warehouse:", options=df[warehouse_id].unique())
-    slice_df = df[df[warehouse_id] == target]
-    
-    if not slice_df.empty:
-        # Plotting the time series for this warehouse
-        rev_data = slice_df.filter(like="_Rev").T
-        rent_data = slice_df.filter(like="_Rent").T
+if uploaded_file:
+    # 2. DATA ENGINE: Load and Normalize (The "Fix")
+    @st.cache_data
+    def process_data(file):
+        raw_df = pd.read_excel(file) if file.name.endswith('.xlsx') else pd.read_csv(file)
+        # Use the first row as headers, then clean
+        raw_df.columns = [str(c).strip() for c in raw_df.columns]
         
-        st.line_chart(rev_data)
-        st.line_chart(rent_data)
+        # Identify Warehouse ID (First Column)
+        id_col = raw_df.columns[0]
+        
+        # Prepare for reshaping
+        df_cleaned = raw_df.iloc[1:].copy()
+        df_cleaned = df_cleaned.rename(columns={id_col: 'Warehouse_ID'})
+        
+        # Melt/Normalize the data into a Long Format
+        # This creates columns: 'Warehouse_ID', 'Metric', 'Value'
+        df_long = pd.melt(df_cleaned, id_vars=['Warehouse_ID'], var_name='Month_Metric', value_name='Value')
+        
+        # Split Month_Metric into 'Month' and 'Metric'
+        df_long[['Month', 'Metric']] = df_long['Month_Metric'].str.extract(r'(.*)\s+(.*)')
+        
+        return df_long
+
+    df_long = process_data(uploaded_file)
+    
+    # 3. TABS
+    tabs = st.tabs(["📈 Portfolio", "🔄 YoY Rent", "📊 Compare", "🔍 Drilldown"])
+
+    # TAB 1: PORTFOLIO SUMMARY
+    with tabs[0]:
+        st.subheader("Portfolio Performance")
+        # Pivot the long data to get clean totals
+        summary = df_long.pivot_table(index='Metric', values='Value', aggfunc='sum')
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Revenue", f"₹{summary.loc['Rev', 'Value']:,.0f}")
+        c2.metric("Total Rent", f"₹{summary.loc['Rent', 'Value']:,.0f}")
+        # Spatial Math: Total Capacity * 6
+        total_sqft = summary.loc['Capacity', 'Value'] * 6
+        c3.metric("Total Area Leased", f"{total_sqft:,.0f} Sq. Ft.")
+
+    # TAB 4: DRILLDOWN
+    with tabs[3]:
+        st.subheader("Warehouse Drilldown")
+        target = st.selectbox("Select Warehouse:", options=sorted(df_long['Warehouse_ID'].unique()))
+        
+        wh_data = df_long[df_long['Warehouse_ID'] == target]
+        
+        # Simple, stable rendering
+        st.line_chart(wh_data.pivot(index='Month', columns='Metric', values='Value'))
+
+else:
+    st.info("Please upload your file in the sidebar to begin.")
