@@ -1,45 +1,59 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import plotly.express as px
 import plotly.graph_objects as go
-import re
 
-# 1. Page Config
-st.set_page_config(page_title="Warehouse Analyzer", layout="wide")
+st.set_page_config(page_title="Warehouse Analytics Pro", layout="wide")
 
-# 2. Data Loader
-@st.cache_resource
-def load_data():
-    df = pd.read_excel("Rent Analysis Data.xlsx", sheet_name="RAW Data")
+# 1. FILE UPLOADER
+uploaded_file = st.sidebar.file_uploader("Upload Warehouse Data (CSV/Excel)", type=["csv", "xlsx"])
+
+if not uploaded_file:
+    st.info("Please upload your 'Warehouse_Analysis_Wide_Format.xlsx' file in the sidebar to begin.")
+    st.stop()
+
+@st.cache_data
+def process_data(file):
+    df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
     df.columns = [str(c).strip() for c in df.columns]
-    df["CMP ID"] = df["CMP ID"].astype(str).str.strip().str.upper()
-    df["Type_Clean"] = df["Details"].astype(str).str.strip().str.lower()
+    # Assuming 'Details' column contains keywords like 'Rev', 'Rent', 'Cap'
+    df['Type_Clean'] = df['Details'].astype(str).str.lower()
     return df
 
-df_raw = load_data()
+df_raw = process_data(uploaded_file)
+tabs = st.tabs(["📈 Portfolio Performance", "🔄 YoY Rent Analyzer", "📊 Compare Two Years", "🔍 Individual Drilldown"])
 
-# 3. Sidebar (Always present)
-st.sidebar.title("⚙️ Global Audit Controls")
-selected_fy = st.sidebar.selectbox("Target Fiscal Year", ["FY 23-24", "FY 24-25", "FY 25-26"])
+# TAB 1: Portfolio Summary
+with tabs[0]:
+    st.subheader("Portfolio Financial Summary")
+    # Calculation Logic: Use grouped sums based on Type_Clean
+    metrics = df_raw.groupby('Type_Clean').sum(numeric_only=True).sum(axis=1)
+    rev = metrics.get('rev', 0)
+    rent = metrics.get('rent', 0)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Revenue", f"₹{rev:,.0f}")
+    col2.metric("Total Rent", f"₹{rent:,.0f}")
+    col3.metric("Net Surplus", f"₹{rev-rent:,.0f}")
+    col4.metric("Efficiency", f"{((rent/rev)*100):.1f}%")
 
-# 4. Tabs
-tabs = st.tabs(["📈 Portfolio Summary", "🔄 YoY Rent Analyzer", "📊 Compare Years", "🔍 Individual Drilldown"])
+# TAB 2: YoY Rent Analyzer
+with tabs[2]:
+    st.subheader("Compare Two Years")
+    c1, c2 = st.columns(2)
+    yr1 = c1.selectbox("Baseline Year", ["2023", "2024", "2025"])
+    yr2 = c2.selectbox("Target Year", ["2024", "2025", "2026"])
+    
+    # Overlay Chart Logic
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name=yr1, x=df_raw['CMP ID'], y=df_raw.filter(like=yr1).sum(axis=1)))
+    fig.add_trace(go.Bar(name=yr2, x=df_raw['CMP ID'], y=df_raw.filter(like=yr2).sum(axis=1)))
+    fig.update_layout(barmode='overlay')
+    st.plotly_chart(fig, use_container_width=True)
 
-# TAB 3: Drilldown (Testing this first to verify functionality)
+# TAB 4: Individual Drilldown
 with tabs[3]:
-    st.subheader("Individual Warehouse Drilldown")
-    options = sorted(df_raw["CMP ID"].unique().tolist())
-    target_wh = st.selectbox("Select Facility:", options=options)
-    
-    wh_slice = df_raw[df_raw["CMP ID"] == target_wh]
-    
-    if not wh_slice.empty:
-        st.write(f"Displaying sequence for: {target_wh}")
-        # Placeholder for your graph logic
-        st.line_chart(wh_slice.filter(like="202")) 
-    else:
-        st.warning("No data found for this asset.")
-
-# 5. Placeholder for other tabs to prevent crashing
-with tabs[0]: st.write("Portfolio Summary Logic Pending.")
-with tabs[1]: st.write("YoY Analyzer Logic Pending.")
-with tabs[2]: st.write("Compare Years Logic Pending.")
+    target = st.selectbox("Select Warehouse:", df_raw['CMP ID'].unique())
+    data = df_raw[df_raw['CMP ID'] == target]
+    st.line_chart(data.filter(like="202"))
